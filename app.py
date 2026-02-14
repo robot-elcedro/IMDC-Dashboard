@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 import sys
-import pandas as pd
+import os
 
 # ============================================================
 # CONFIGURACIÓN DE PÁGINA
@@ -192,22 +192,26 @@ def show_session_info():
 # CON SERVICE ACCOUNT (100% SEGURO)
 # ============================================================
 
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
-import io
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseDownload
+    import io
+    GOOGLE_API_AVAILABLE = True
+except ImportError:
+    GOOGLE_API_AVAILABLE = False
+    st.error("❌ No se pudo importar Google API. Verifica requirements.txt")
+
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def download_from_private_drive():
     """
     Descarga datos desde Google Drive PRIVADO usando Service Account
-    
-    SEGURIDAD:
-    - La carpeta es PRIVADA (nadie puede verla)
-    - Solo este service account tiene acceso
-    - Las credenciales están encriptadas en Streamlit Secrets
-    - Nadie puede robar tus datos
     """
+    
+    if not GOOGLE_API_AVAILABLE:
+        st.error("❌ Google API no disponible")
+        return None
     
     try:
         # Cargar credenciales del service account desde secrets
@@ -234,87 +238,59 @@ def download_from_private_drive():
         data_dir = Path("/tmp/imdc_data")
         data_dir.mkdir(exist_ok=True)
         
-        with st.spinner("📥 Descargando datos desde Google Drive privado..."):
+        # Listar archivos en la carpeta
+        query = f"'{folder_id}' in parents and trashed=false"
+        results = service.files().list(
+            q=query,
+            fields="files(id, name, mimeType, size)"
+        ).execute()
+        
+        files = results.get('files', [])
+        
+        if not files:
+            st.error("❌ No se encontraron archivos en la carpeta")
+            return None
+        
+        # Descargar archivos
+        archivos_descargados = 0
+        
+        for file in files:
+            file_id = file['id']
+            file_name = file['name']
+            file_size = int(file.get('size', 0))
             
-            # Listar archivos en la carpeta
-            query = f"'{folder_id}' in parents and trashed=false"
-            results = service.files().list(
-                q=query,
-                fields="files(id, name, mimeType, size)"
-            ).execute()
-            
-            files = results.get('files', [])
-            
-            if not files:
-                st.error("❌ No se encontraron archivos en la carpeta")
-                st.info("Verifica que la carpeta contenga archivos .parquet")
-                return None
-            
-            # Filtrar solo parquets y xlsx
-            archivos_descargados = 0
-            
-            for file in files:
-                file_id = file['id']
-                file_name = file['name']
-                file_size = int(file.get('size', 0))
+            if file_name.endswith('.parquet') or file_name.endswith('.xlsx'):
+                request = service.files().get_media(fileId=file_id)
+                file_path = data_dir / file_name
                 
-                # Solo descargar parquets y xlsx
-                if file_name.endswith('.parquet') or file_name.endswith('.xlsx'):
-                    
-                    # Descargar archivo
-                    request = service.files().get_media(fileId=file_id)
-                    
-                    file_path = data_dir / file_name
-                    
-                    fh = io.BytesIO()
-                    downloader = MediaIoBaseDownload(fh, request)
-                    
-                    done = False
-                    while not done:
-                        status, done = downloader.next_chunk()
-                    
-                    # Guardar en disco
-                    with open(file_path, 'wb') as f:
-                        f.write(fh.getvalue())
-                    
-                    archivos_descargados += 1
-                    
-                    # Mostrar tamaño legible
-                    size_mb = file_size / (1024 * 1024)
-                    st.success(f"✅ {file_name} ({size_mb:.1f} MB)")
-            
-            if archivos_descargados == 0:
-                st.warning("⚠️ No se encontraron archivos .parquet o .xlsx")
-                return None
-            
-            st.success(f"✅ Total descargado: {archivos_descargados} archivos")
-            
-            return data_dir
+                fh = io.BytesIO()
+                downloader = MediaIoBaseDownload(fh, request)
+                
+                done = False
+                while not done:
+                    status, done = downloader.next_chunk()
+                
+                with open(file_path, 'wb') as f:
+                    f.write(fh.getvalue())
+                
+                archivos_descargados += 1
+                size_mb = file_size / (1024 * 1024)
+                st.success(f"✅ {file_name} ({size_mb:.1f} MB)")
+        
+        if archivos_descargados == 0:
+            st.warning("⚠️ No se encontraron archivos .parquet o .xlsx")
+            return None
+        
+        st.success(f"✅ Total descargado: {archivos_descargados} archivos")
+        return data_dir
         
     except KeyError as e:
-        st.error(f"❌ **Error en configuración de Secrets**")
-        st.info(f"""
-        Falta la clave: {str(e)}
-        
-        Verifica que en Settings → Secrets tengas:
-        - [google_service_account] con todas las claves del JSON
-        - [google_drive] con folder_id
-        """)
+        st.error(f"❌ **Error en configuración de Secrets**: {str(e)}")
         return None
         
     except Exception as e:
         st.error(f"❌ **Error al conectar con Google Drive**")
         st.exception(e)
-        st.info("""
-        Posibles causas:
-        1. El service account no tiene acceso a la carpeta
-        2. El folder_id es incorrecto
-        3. Las credenciales están mal configuradas
-        
-        Solución:
-        - Verifica que compartiste la carpeta con el client_email del service account
-        - Verifica que el folder_id sea correcto
-        """)
         return None
 
 
@@ -333,29 +309,43 @@ def main():
     show_session_info()
     
     # Descargar datos desde Google Drive PRIVADO
-    data_dir = download_from_private_drive()
+    with st.spinner("📥 Descargando datos..."):
+        data_dir = download_from_private_drive()
     
     if data_dir is None:
+        st.error("❌ No se pudieron cargar los datos")
         st.stop()
     
-    # Importar el dashboard principal
+    # Configurar variable de entorno para que el dashboard encuentre los datos
+    os.environ['IMDC_DATA_DIR'] = str(data_dir)
+    
+    # Agregar directorio al path
     sys.path.insert(0, str(Path(__file__).parent))
     
     try:
-        import imdc_web_FINAL_COMPLETO as dashboard
+        # Importar módulo del dashboard
+        import imdc_web_FINAL_COMPLETO
         
-        # Modificar OUTPUT_DIR temporalmente
-        dashboard.OUTPUT_DIR = data_dir
+        # Modificar OUTPUT_DIR para que use los datos descargados
+        if hasattr(imdc_web_FINAL_COMPLETO, 'OUTPUT_DIR'):
+            imdc_web_FINAL_COMPLETO.OUTPUT_DIR = data_dir
         
-        st.success("🎉 **Dashboard cargado correctamente**")
+        # Forzar recarga si es necesario
+        if hasattr(imdc_web_FINAL_COMPLETO, 'load_parquet_data'):
+            st.success("🎉 **Dashboard cargado correctamente**")
         
     except ImportError as e:
-        st.error(f"❌ Error al cargar el dashboard: {str(e)}")
-        st.info("Asegúrate de que `imdc_web_FINAL_COMPLETO.py` esté en el repositorio")
+        st.error(f"❌ Error al importar el dashboard: {str(e)}")
+        st.info("""
+        **Verifica:**
+        - El archivo `imdc_web_FINAL_COMPLETO.py` está en el repositorio
+        - El archivo `graficos_mejorados.py` está en el repositorio
+        """)
         st.stop()
     except Exception as e:
         st.error(f"❌ Error en el dashboard: {str(e)}")
         st.exception(e)
+        st.stop()
 
 
 if __name__ == "__main__":
