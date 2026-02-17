@@ -3185,6 +3185,149 @@ def crear_comparador_unificado_yoy(df_all: pd.DataFrame, year_actual: int, venta
         st.plotly_chart(fig_util_acum, use_container_width=True)
     
     # ========================================
+    # ── TABLAS DE CALOR — FAMILIAS Y MARCAS ─────────────────
+    st.markdown("---")
+
+    MONTHS_ABBR = {1:"Ene",2:"Feb",3:"Mar",4:"Abr",5:"May",6:"Jun",
+                   7:"Jul",8:"Ago",9:"Sep",10:"Oct",11:"Nov",12:"Dic"}
+
+    TOP_N = 5
+    vcol_tm = _ventas_col(ventas_con_iva)
+
+    def _heatmap_mensual_acumulado(df_b, df_c, dim_col, año_b, año_c, titulo):
+        """
+        Genera 2 heatmaps lado a lado:
+        - Izquierda: variación % mensual
+        - Derecha: variación % acumulada mes a mes
+        """
+        # Top N por ventas año comparado
+        top_dims = (df_c.groupby(dim_col, observed=True)[vcol_tm]
+                        .sum().sort_values(ascending=False).index.tolist())
+
+        # Pivot mensual
+        def _pivot(df, dims):
+            g = (df[df[dim_col].isin(dims)]
+                 .groupby([dim_col, "Mes"], observed=True)
+                 .agg(V=(vcol_tm,"sum")).reset_index())
+            p = g.pivot(index=dim_col, columns="Mes", values="V").fillna(0)
+            p.columns = [MONTHS_ABBR.get(c, c) for c in p.columns]
+            return p
+
+        piv_b = _pivot(df_b, top_dims)
+        piv_c = _pivot(df_c, top_dims)
+
+        # Alinear columnas (solo meses presentes en ambos)
+        meses_comunes = [m for m in MONTHS_ABBR.values()
+                         if m in piv_b.columns and m in piv_c.columns]
+
+        piv_b = piv_b.reindex(columns=meses_comunes, fill_value=0)
+        piv_c = piv_c.reindex(columns=meses_comunes, fill_value=0)
+
+        # Reindexar por top_dims
+        piv_b = piv_b.reindex(top_dims).fillna(0)
+        piv_c = piv_c.reindex(top_dims).fillna(0)
+
+        # Variación % mensual
+        with np.errstate(divide="ignore", invalid="ignore"):
+            var_mens = np.where(piv_b > 0,
+                                (piv_c.values - piv_b.values) / piv_b.values * 100,
+                                np.nan)
+        df_var_mens = pd.DataFrame(var_mens, index=top_dims, columns=meses_comunes)
+
+        # Variación % acumulada
+        acum_b = piv_b.cumsum(axis=1)
+        acum_c = piv_c.cumsum(axis=1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            var_acum = np.where(acum_b > 0,
+                                (acum_c.values - acum_b.values) / acum_b.values * 100,
+                                np.nan)
+        df_var_acum = pd.DataFrame(var_acum, index=top_dims, columns=meses_comunes)
+
+        def _make_heatmap(df_var, subtitulo):
+            # Texto de cada celda
+            text = df_var.applymap(
+                lambda x: f"{x:+.1f}%" if pd.notna(x) else "—"
+            ).values
+
+            # Colores: rojo=-50%, blanco=0%, verde=+50%
+            colorscale = [
+                [0.0,  "#7F1D1D"],
+                [0.25, "#EF4444"],
+                [0.45, "#FCA5A5"],
+                [0.5,  "#1E293B"],
+                [0.55, "#86EFAC"],
+                [0.75, "#16A34A"],
+                [1.0,  "#14532D"],
+            ]
+
+            fig = go.Figure(go.Heatmap(
+                z=df_var.values,
+                x=df_var.columns.tolist(),
+                y=df_var.index.tolist(),
+                text=text,
+                texttemplate="%{text}",
+                textfont=dict(size=11, color="white"),
+                colorscale=colorscale,
+                zmid=0,
+                zmin=-50,
+                zmax=50,
+                colorbar=dict(
+                    title="%",
+                    thickness=10,
+                    len=0.8,
+                    ticksuffix="%"
+                ),
+                hovertemplate=(
+                    "<b>%{y}</b><br>"
+                    "%{x}: <b>%{text}</b><br>"
+                    "<extra></extra>"
+                )
+            ))
+
+            fig.update_layout(
+                title=dict(text=f"<b>{subtitulo}</b>",
+                           font=dict(size=12, color="#F8FAFC")),
+                height=180 + len(top_dims) * 32,
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#F8FAFC", size=10),
+                margin=dict(l=10, r=10, t=45, b=10),
+                xaxis=dict(side="top", tickfont=dict(size=10)),
+                yaxis=dict(tickfont=dict(size=10), autorange="reversed"),
+            )
+            return fig
+
+        col_izq, col_der = st.columns(2, gap="large")
+        with col_izq:
+            st.plotly_chart(
+                _make_heatmap(df_var_mens, f"{titulo} — Variación % Mensual vs {año_b}"),
+                use_container_width=True
+            )
+        with col_der:
+            st.plotly_chart(
+                _make_heatmap(df_var_acum, f"{titulo} — Variación % Acumulada vs {año_b}"),
+                use_container_width=True
+            )
+
+        # Leyenda
+        c1, c2, c3 = st.columns(3)
+        with c1: st.markdown("🟢 **Verde** — Crecimiento vs año anterior")
+        with c2: st.markdown("⬛ **Oscuro** — Sin cambio")
+        with c3: st.markdown("🔴 **Rojo** — Caída vs año anterior")
+
+    # ── FAMILIAS ─────────────────────────────────────────────
+    st.markdown("### 📦 Familias — Tabla de Calor")
+    st.caption(f"Variación % de {año_comp} vs {año_base} · Solo meses con datos en ambos años")
+    _heatmap_mensual_acumulado(df_base, df_comp, "Familia_Nombre", año_base, año_comp, "Familias")
+
+    st.markdown("---")
+
+    # ── MARCAS ───────────────────────────────────────────────
+    st.markdown("### 🏷️ Marcas — Tabla de Calor")
+    st.caption(f"Variación % de {año_comp} vs {año_base} · Solo meses con datos en ambos años")
+    _heatmap_mensual_acumulado(df_base, df_comp, "Marca_Nombre", año_base, año_comp, "Marcas")
+
+        # ========================================
     # TABLA RESUMEN ABAJO
     # ========================================
     st.markdown("---")
@@ -3866,611 +4009,978 @@ st.markdown("---")
 st.markdown("## 📋 Dashboard Detallado")
 st.markdown("*Vista completa con todas las métricas y análisis*")
 
+# ============================================================
+# FUNCIONES DE ANÁLISIS INTELIGENTE Y RESUMEN EJECUTIVO
+# ============================================================
+
+def analizar_cambios_yoy(k_cur: dict, k_prev: dict, ms_cur: pd.DataFrame, ms_prev: pd.DataFrame) -> dict:
+    """
+    Analiza cambios YoY y determina posibles causas
+    """
+    analisis = {
+        'cambio_ventas': 0,
+        'cambio_utilidad': 0,
+        'cambio_margen': 0,
+        'causas_identificadas': [],
+        'alertas': [],
+        'recomendaciones': []
+    }
+    
+    # Calcular cambios
+    if k_prev["ventas"] > 0:
+        analisis['cambio_ventas'] = ((k_cur["ventas"] - k_prev["ventas"]) / k_prev["ventas"]) * 100
+    
+    if k_prev["utilidad"] > 0:
+        analisis['cambio_utilidad'] = ((k_cur["utilidad"] - k_prev["utilidad"]) / k_prev["utilidad"]) * 100
+    
+    if pd.notna(k_prev["margen"]) and pd.notna(k_cur["margen"]):
+        analisis['cambio_margen'] = (k_cur["margen"] - k_prev["margen"]) * 100
+    
+    # ANÁLISIS DE CAUSAS
+    
+    # 1. Ventas bajaron pero utilidad subió = Mejora de margen
+    if analisis['cambio_ventas'] < 0 and analisis['cambio_utilidad'] > 0:
+        analisis['causas_identificadas'].append({
+            'tipo': 'positivo',
+            'titulo': '💰 Mejora de Rentabilidad',
+            'descripcion': f"Aunque las ventas bajaron {abs(analisis['cambio_ventas']):.1f}%, la utilidad subió {analisis['cambio_utilidad']:.1f}%. Esto indica mejor margen de ganancia."
+        })
+        analisis['recomendaciones'].append("✅ Mantener la estrategia actual de productos más rentables")
+    
+    # 2. Ventas subieron pero utilidad bajó = Problema de margen
+    elif analisis['cambio_ventas'] > 0 and analisis['cambio_utilidad'] < 0:
+        analisis['causas_identificadas'].append({
+            'tipo': 'alerta',
+            'titulo': '⚠️ Crecimiento No Rentable',
+            'descripcion': f"Las ventas subieron {analisis['cambio_ventas']:.1f}% pero la utilidad bajó {abs(analisis['cambio_utilidad']):.1f}%. Posible exceso de descuentos o cambio a productos menos rentables."
+        })
+        analisis['alertas'].append("⚠️ Revisar política de descuentos")
+        analisis['recomendaciones'].append("🔍 Analizar mix de productos vendidos vs año anterior")
+    
+    # 3. Ambos bajaron = Problema general
+    elif analisis['cambio_ventas'] < 0 and analisis['cambio_utilidad'] < 0:
+        if abs(analisis['cambio_utilidad']) > abs(analisis['cambio_ventas']) * 1.5:
+            analisis['causas_identificadas'].append({
+                'tipo': 'critico',
+                'titulo': '🚨 Caída Acelerada de Utilidad',
+                'descripcion': f"Ventas bajaron {abs(analisis['cambio_ventas']):.1f}% pero utilidad cayó {abs(analisis['cambio_utilidad']):.1f}%. El margen está empeorando."
+            })
+            analisis['alertas'].append("🚨 Urgente: Revisar estructura de costos")
+        else:
+            analisis['causas_identificadas'].append({
+                'tipo': 'neutral',
+                'titulo': '📉 Disminución Proporcional',
+                'descripcion': f"Ventas y utilidad bajaron proporcionalmente ({abs(analisis['cambio_ventas']):.1f}% y {abs(analisis['cambio_utilidad']):.1f}%). El margen se mantiene."
+            })
+    
+    # 4. Ambos subieron = Éxito
+    elif analisis['cambio_ventas'] > 0 and analisis['cambio_utilidad'] > 0:
+        if analisis['cambio_utilidad'] > analisis['cambio_ventas'] * 1.2:
+            analisis['causas_identificadas'].append({
+                'tipo': 'excelente',
+                'titulo': '🎉 Crecimiento Acelerado',
+                'descripcion': f"Ventas subieron {analisis['cambio_ventas']:.1f}% y utilidad {analisis['cambio_utilidad']:.1f}%. El margen está mejorando."
+            })
+            analisis['recomendaciones'].append("✅ Identificar qué productos están impulsando este crecimiento")
+        else:
+            analisis['causas_identificadas'].append({
+                'tipo': 'positivo',
+                'titulo': '📈 Crecimiento Saludable',
+                'descripcion': f"Ventas y utilidad crecieron en línea ({analisis['cambio_ventas']:.1f}% y {analisis['cambio_utilidad']:.1f}%)."
+            })
+    
+    # Análisis de transacciones vs ticket
+    if k_prev["txns"] > 0:
+        cambio_txns = ((k_cur["txns"] - k_prev["txns"]) / k_prev["txns"]) * 100
+        cambio_ticket = ((k_cur["ticket"] - k_prev["ticket"]) / k_prev["ticket"]) * 100 if k_prev["ticket"] > 0 else 0
+        
+        if cambio_txns < -10:
+            analisis['alertas'].append(f"⚠️ Transacciones cayeron {abs(cambio_txns):.1f}% - Menos clientes")
+            analisis['recomendaciones'].append("📢 Considerar campaña de atracción de clientes")
+        
+        if cambio_ticket > 15:
+            analisis['causas_identificadas'].append({
+                'tipo': 'positivo',
+                'titulo': '💳 Ticket Promedio Alto',
+                'descripcion': f"El ticket promedio subió {cambio_ticket:.1f}%. Los clientes están comprando más por visita."
+            })
+    
+    return analisis
+
+
+def crear_resumen_ejecutivo(df_kpi: pd.DataFrame, k_cur: dict, k_prev: dict, 
+                            ms_cur: pd.DataFrame, ms_prev: pd.DataFrame,
+                            ventas_con_iva: bool, sucursal: str):
+    """
+    Crea el tab de resumen ejecutivo con análisis inteligente
+    """
+    
+    st.markdown("## 📊 Resumen Ejecutivo del Período")
+    
+    # Análisis automático de cambios
+    analisis = analizar_cambios_yoy(k_cur, k_prev, ms_cur, ms_prev)
+    
+    # ========================================
+    # SECCIÓN 1: ANÁLISIS INTELIGENTE
+    # ========================================
+    st.markdown("### 🧠 Análisis Inteligente")
+    
+    # Mostrar causas identificadas
+    if analisis['causas_identificadas']:
+        for causa in analisis['causas_identificadas']:
+            if causa['tipo'] == 'excelente':
+                st.success(f"**{causa['titulo']}**\n\n{causa['descripcion']}")
+            elif causa['tipo'] == 'positivo':
+                st.info(f"**{causa['titulo']}**\n\n{causa['descripcion']}")
+            elif causa['tipo'] == 'alerta':
+                st.warning(f"**{causa['titulo']}**\n\n{causa['descripcion']}")
+            elif causa['tipo'] == 'critico':
+                st.error(f"**{causa['titulo']}**\n\n{causa['descripcion']}")
+            else:
+                st.info(f"**{causa['titulo']}**\n\n{causa['descripcion']}")
+    
+    # Alertas
+    if analisis['alertas']:
+        with st.expander("⚠️ Alertas Importantes", expanded=True):
+            for alerta in analisis['alertas']:
+                st.markdown(f"- {alerta}")
+    
+    # Recomendaciones
+    if analisis['recomendaciones']:
+        with st.expander("💡 Recomendaciones", expanded=False):
+            for rec in analisis['recomendaciones']:
+                st.markdown(f"- {rec}")
+    
+    st.markdown("---")
+    
+    # ========================================
+    # SECCIÓN 2: TOP & BOTTOM PERFORMERS
+    # ========================================
+    st.markdown("### 🏆 Top & Bottom Performers")
+    
+    if not df_kpi.empty and "Vendedor_Nombre" in df_kpi.columns:
+        
+        # Agrupar por vendedor
+        ventas_col = "Total_alloc" if ventas_con_iva else "Sub Total"
+        
+        vendedores = df_kpi.groupby("Vendedor_Nombre", observed=True).agg({
+            ventas_col: 'sum',
+            'Utilidad': 'sum',
+            'DOC_KEY': 'nunique'
+        }).reset_index()
+        
+        vendedores.columns = ['Vendedor', 'Ventas', 'Utilidad', 'Transacciones']
+        vendedores = vendedores[vendedores['Vendedor'].notna()]
+        vendedores = vendedores[vendedores['Vendedor'].str.strip() != '']
+        vendedores = vendedores[vendedores['Vendedor'] != 'TODOS']
+        
+        if len(vendedores) > 0:
+            # Calcular ticket promedio
+            vendedores['Ticket_Prom'] = vendedores['Ventas'] / vendedores['Transacciones']
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### 🥇 Top Performers")
+                
+                # Top en ventas
+                top_ventas = vendedores.nlargest(1, 'Ventas').iloc[0]
+                st.metric(
+                    "💰 Mayor Vendedor",
+                    top_ventas['Vendedor'],
+                    f"{money_fmt(top_ventas['Ventas'])}"
+                )
+                
+                # Top en utilidad
+                top_utilidad = vendedores.nlargest(1, 'Utilidad').iloc[0]
+                st.metric(
+                    "📈 Mayor Utilidad",
+                    top_utilidad['Vendedor'],
+                    f"{money_fmt(top_utilidad['Utilidad'])}"
+                )
+                
+                # Top en transacciones
+                top_txns = vendedores.nlargest(1, 'Transacciones').iloc[0]
+                st.metric(
+                    "🔄 Más Transacciones",
+                    top_txns['Vendedor'],
+                    f"{int(top_txns['Transacciones']):,} txns"
+                )
+            
+            with col2:
+                st.markdown("#### 📊 Bottom Performers")
+                
+                # Bottom en ventas
+                bottom_ventas = vendedores.nsmallest(1, 'Ventas').iloc[0]
+                st.metric(
+                    "💰 Menor Vendedor",
+                    bottom_ventas['Vendedor'],
+                    f"{money_fmt(bottom_ventas['Ventas'])}"
+                )
+                
+                # Bottom en utilidad
+                bottom_utilidad = vendedores.nsmallest(1, 'Utilidad').iloc[0]
+                st.metric(
+                    "📈 Menor Utilidad",
+                    bottom_utilidad['Vendedor'],
+                    f"{money_fmt(bottom_utilidad['Utilidad'])}"
+                )
+                
+                # Bottom en ticket promedio
+                bottom_ticket = vendedores.nsmallest(1, 'Ticket_Prom').iloc[0]
+                st.metric(
+                    "💳 Menor Ticket Promedio",
+                    bottom_ticket['Vendedor'],
+                    f"{money_fmt(bottom_ticket['Ticket_Prom'])}"
+                )
+    
+    st.markdown("---")
+    
+    # ========================================
+    # SECCIÓN 3: TOP 10 PRODUCTOS
+    # ========================================
+    st.markdown("### 📦 Top 10 - Productos, Marcas y Familias")
+    
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "💰 Por Ventas",
+        "📈 Por Utilidad",
+        "🏷️ Marcas",
+        "📂 Familias"
+    ])
+    
+    with tab1:
+        st.markdown("#### Top 10 Artículos por Ventas")
+        
+        if not df_kpi.empty and "Articulo" in df_kpi.columns:
+            ventas_col = "Total_alloc" if ventas_con_iva else "Sub Total"
+            
+            top_articulos_ventas = df_kpi.groupby("Articulo", observed=True).agg({
+                ventas_col: 'sum',
+                'Utilidad': 'sum',
+                'DOC_KEY': 'nunique'
+            }).reset_index()
+            
+            top_articulos_ventas.columns = ['Artículo', 'Ventas', 'Utilidad', 'Transacciones']
+            top_articulos_ventas = top_articulos_ventas.nlargest(10, 'Ventas')
+            
+            # Formatear
+            top_articulos_ventas['Ventas'] = top_articulos_ventas['Ventas'].apply(money_fmt)
+            top_articulos_ventas['Utilidad'] = top_articulos_ventas['Utilidad'].apply(money_fmt)
+            top_articulos_ventas['Transacciones'] = top_articulos_ventas['Transacciones'].apply(lambda x: f"{int(x):,}")
+            
+            st.dataframe(top_articulos_ventas, use_container_width=True, height=400)
+    
+    with tab2:
+        st.markdown("#### Top 10 Artículos por Utilidad")
+        
+        if not df_kpi.empty and "Articulo" in df_kpi.columns:
+            ventas_col = "Total_alloc" if ventas_con_iva else "Sub Total"
+            
+            top_articulos_utilidad = df_kpi.groupby("Articulo", observed=True).agg({
+                ventas_col: 'sum',
+                'Utilidad': 'sum',
+                'DOC_KEY': 'nunique'
+            }).reset_index()
+            
+            top_articulos_utilidad.columns = ['Artículo', 'Ventas', 'Utilidad', 'Transacciones']
+            top_articulos_utilidad['Margen'] = (top_articulos_utilidad['Utilidad'] / top_articulos_utilidad['Ventas'] * 100).fillna(0)
+            top_articulos_utilidad = top_articulos_utilidad.nlargest(10, 'Utilidad')
+            
+            # Formatear
+            top_articulos_utilidad['Ventas'] = top_articulos_utilidad['Ventas'].apply(money_fmt)
+            top_articulos_utilidad['Utilidad'] = top_articulos_utilidad['Utilidad'].apply(money_fmt)
+            top_articulos_utilidad['Margen'] = top_articulos_utilidad['Margen'].apply(lambda x: f"{x:.1f}%")
+            
+            st.dataframe(top_articulos_utilidad, use_container_width=True, height=400)
+    
+    with tab3:
+        st.markdown("#### Top 10 Marcas")
+        
+        if not df_kpi.empty and "Marca_Nombre" in df_kpi.columns:
+            ventas_col = "Total_alloc" if ventas_con_iva else "Sub Total"
+            
+            top_marcas = df_kpi.groupby("Marca_Nombre", observed=True).agg({
+                ventas_col: 'sum',
+                'Utilidad': 'sum',
+                'DOC_KEY': 'nunique'
+            }).reset_index()
+            
+            top_marcas.columns = ['Marca', 'Ventas', 'Utilidad', 'Transacciones']
+            top_marcas = top_marcas.nlargest(10, 'Ventas')
+            
+            # Formatear
+            top_marcas['Ventas'] = top_marcas['Ventas'].apply(money_fmt)
+            top_marcas['Utilidad'] = top_marcas['Utilidad'].apply(money_fmt)
+            top_marcas['Transacciones'] = top_marcas['Transacciones'].apply(lambda x: f"{int(x):,}")
+            
+            st.dataframe(top_marcas, use_container_width=True, height=400)
+    
+    with tab4:
+        st.markdown("#### Top 10 Familias")
+        
+        if not df_kpi.empty and "Familia_Nombre" in df_kpi.columns:
+            ventas_col = "Total_alloc" if ventas_con_iva else "Sub Total"
+            
+            top_familias = df_kpi.groupby("Familia_Nombre", observed=True).agg({
+                ventas_col: 'sum',
+                'Utilidad': 'sum',
+                'DOC_KEY': 'nunique'
+            }).reset_index()
+            
+            top_familias.columns = ['Familia', 'Ventas', 'Utilidad', 'Transacciones']
+            top_familias = top_familias.nlargest(10, 'Ventas')
+            
+            # Formatear
+            top_familias['Ventas'] = top_familias['Ventas'].apply(money_fmt)
+            top_familias['Utilidad'] = top_familias['Utilidad'].apply(money_fmt)
+            top_familias['Transacciones'] = top_familias['Transacciones'].apply(lambda x: f"{int(x):,}")
+            
+            st.dataframe(top_familias, use_container_width=True, height=400)
+
+
 # ------------------------------------------------------------
-# Tabs
+# NUEVA ESTRUCTURA EJECUTIVA — 4 TABS
+# Diseño C-Suite: máximo 2 niveles de navegación
 # ------------------------------------------------------------
-tab_resumen_exec, tab_resumen, tab_mix, tab_prod, tab_insights, tab_powerbi = st.tabs([
-        "🎯 Resumen Inteligente",
-        "📊 Resumen Ejecutivo",
-        "🏪 Mix",
-        "👥 Productividad",
-        "💡 Insights",
-        "🔧 Análisis Personalizado"
+tab_comando, tab_negocio, tab_comparativos, tab_avanzado = st.tabs([
+        "🎯 Comando Central",
+        "📊 Análisis de Negocio",
+        "📈 Comparativos",
+        "🔬 Análisis Avanzado"
     ])
 
-# ============================================================
-# TAB: Resumen Ejecutivo (Bloque 1)
-# ============================================================
-# ============================================================
-# TAB 0: RESUMEN EJECUTIVO INTELIGENTE
-# ============================================================
-with tab_resumen_exec:
-    crear_resumen_ejecutivo(df_kpi, k_cur, k_prev, ms_cur, ms_prev, ventas_con_iva, sucursal)
 
-with tab_resumen:
-    # KPIs fila 1 (6)
-    cols = st.columns(6)
-    y_sales = yoy(k_cur["ventas"], k_prev["ventas"])
-    y_profit = yoy(k_cur["utilidad"], k_prev["utilidad"])
-    d_margin_pp = (k_cur["margen"] - k_prev["margen"]) * 100 if (pd.notna(k_cur["margen"]) and pd.notna(k_prev["margen"])) else np.nan
-    y_txns = yoy(k_cur["txns"], k_prev["txns"])
-    y_ticket = yoy(k_cur["ticket"], k_prev["ticket"])
-    d_desc_pp = (k_cur["descpct"] - k_prev["descpct"]) * 100 if (pd.notna(k_cur["descpct"]) and pd.notna(k_prev["descpct"])) else np.nan
+# ╔══════════════════════════════════════════════════════════════╗
+# ║   NUEVA ARQUITECTURA EJECUTIVA — 4 TABS C-SUITE             ║
+# ╚══════════════════════════════════════════════════════════════╝
 
+# ──────────────────────────────────────────────────────────────
+# FUNCIÓN AUXILIAR: Narrativa automática del período
+# ──────────────────────────────────────────────────────────────
+def narrativa_ejecutiva(k_cur, k_prev, sucursal, m_start, m_end, año_sel):
+    """Narrativa directa estilo conversacional para el CCO"""
+    MONTHS = {
+        1:"enero",2:"febrero",3:"marzo",4:"abril",5:"mayo",6:"junio",
+        7:"julio",8:"agosto",9:"septiembre",10:"octubre",11:"noviembre",12:"diciembre"
+    }
+    # Período en texto
+    if m_start == m_end:
+        periodo_txt = f"En {MONTHS.get(m_start, str(m_start))} de {año_sel}"
+    else:
+        periodo_txt = f"De {MONTHS.get(m_start, str(m_start))} a {MONTHS.get(m_end, str(m_end))} de {año_sel}"
+
+    suc_txt = "en todas las sucursales" if sucursal == "CONSOLIDADO" else f"en {sucursal}"
+
+    # Deltas
+    cv = ((k_cur["ventas"]   - k_prev["ventas"])   / k_prev["ventas"]  * 100) if k_prev["ventas"]   > 0 else 0
+    cu = ((k_cur["utilidad"] - k_prev["utilidad"]) / k_prev["utilidad"] * 100) if k_prev["utilidad"] > 0 else 0
+    cm = (k_cur["margen"]    - k_prev["margen"]) * 100 if (pd.notna(k_cur["margen"]) and pd.notna(k_prev["margen"])) else 0
+
+    # Texto ventas
+    if cv > 0:
+        txt_v = f'<span style="color:#10B981;font-weight:700;">▲ {cv:.1f}% más que el año pasado</span>'
+    else:
+        txt_v = f'<span style="color:#EF4444;font-weight:700;">▼ {abs(cv):.1f}% menos que el año pasado</span>'
+
+    # Texto utilidad
+    if cu > 0:
+        txt_u = f'<span style="color:#10B981;font-weight:700;">▲ {cu:.1f}% más</span>'
+    else:
+        txt_u = f'<span style="color:#EF4444;font-weight:700;">▼ {abs(cu):.1f}% menos</span>'
+
+    # Texto margen
+    if cm > 0.2:
+        txt_m = f'<span style="color:#10B981;font-weight:600;">subió {cm:.1f} puntos</span>'
+    elif cm < -0.2:
+        txt_m = f'<span style="color:#EF4444;font-weight:600;">bajó {abs(cm):.1f} puntos</span>'
+    else:
+        txt_m = f'<span style="color:#F59E0B;font-weight:600;">se mantuvo estable</span>'
+
+    margen_actual = pct_fmt(k_cur["margen"]) if pd.notna(k_cur["margen"]) else "—"
+
+    html = f"""
+    <div style='background:linear-gradient(135deg,#1e3a5f 0%,#0f2540 100%);
+                border-left:4px solid #2563EB;border-radius:8px;
+                padding:16px 22px;margin-bottom:16px;'>
+        <p style='color:#64748B;font-size:11px;margin:0 0 6px 0;
+                  text-transform:uppercase;letter-spacing:1px;'>
+            {periodo_txt} · {suc_txt}
+        </p>
+        <p style='color:#F1F5F9;font-size:16px;margin:0;line-height:1.8;'>
+            Vendimos <strong>{money_fmt(k_cur["ventas"])}</strong>, {txt_v}.
+            Ganamos <strong>{money_fmt(k_cur["utilidad"])}</strong> de utilidad ({txt_u}).
+            El margen quedó en <strong>{margen_actual}</strong> — {txt_m}.
+        </p>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def semaforo_salud(k_cur, k_prev):
+    """Semáforo ejecutivo de salud del negocio"""
+    cv = ((k_cur["ventas"]   - k_prev["ventas"])   / k_prev["ventas"]  * 100) if k_prev["ventas"]   > 0 else 0
+    cu = ((k_cur["utilidad"] - k_prev["utilidad"]) / k_prev["utilidad"] * 100) if k_prev["utilidad"] > 0 else 0
+    cm = (k_cur["margen"]    - k_prev["margen"]) * 100 if (pd.notna(k_cur["margen"]) and pd.notna(k_prev["margen"])) else 0
+
+    score = 0
+    if cv > 5:  score += 2
+    elif cv > 0: score += 1
+    if cu > 5:  score += 2
+    elif cu > 0: score += 1
+    if cm > 0:  score += 1
+
+    if score >= 4:
+        estado, color, icono = "NEGOCIO SALUDABLE", "#10B981", "🟢"
+    elif score >= 2:
+        estado, color, icono = "ATENCIÓN REQUERIDA", "#F59E0B", "🟡"
+    else:
+        estado, color, icono = "ACCIÓN INMEDIATA", "#EF4444", "🔴"
+
+    st.markdown(f"""
+    <div style='display:inline-block;background:{color}22;border:1px solid {color};
+                border-radius:20px;padding:4px 16px;margin-bottom:12px;'>
+        <span style='color:{color};font-weight:700;font-size:13px;'>{icono} {estado}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════
+# TAB 1 — COMANDO CENTRAL
+# Responde: ¿Estamos creciendo? ¿Hay alguna crisis?
+# ══════════════════════════════════════════════════════════════
+with tab_comando:
+
+    # Semáforo y narrativa
+    semaforo_salud(k_cur, k_prev)
+    narrativa_ejecutiva(k_cur, k_prev, sucursal, m_start, m_end, int(year))
+
+    # ── KPIs principales (5) ─────────────────────────────────
+    y_sales    = yoy(k_cur["ventas"],    k_prev["ventas"])
+    y_profit   = yoy(k_cur["utilidad"],  k_prev["utilidad"])
+    d_margin   = (k_cur["margen"] - k_prev["margen"]) * 100 if (pd.notna(k_cur["margen"]) and pd.notna(k_prev["margen"])) else np.nan
+    y_txns     = yoy(k_cur["txns"],      k_prev["txns"])
+    y_ticket   = yoy(k_cur["ticket"],    k_prev["ticket"])
+
+    # 4 KPIs ejecutivos principales — vista C-Suite
+    cols = st.columns(4)
     with cols[0]:
-        cls, txt = _pill_pct(y_sales); kpi_card("Ventas Totales (CON IVA)" if ventas_con_iva else "Ventas Totales (SIN IVA)", money_fmt(k_cur["ventas"]), txt, cls)
+        cls, txt = _pill_pct(y_sales);  kpi_card("Ventas Totales" + (" CON IVA" if ventas_con_iva else " SIN IVA"), money_fmt(k_cur["ventas"]), txt, cls)
     with cols[1]:
-        cls, txt = _pill_pct(y_profit); kpi_card("Utilidad Total (SIN IVA)", money_fmt(k_cur["utilidad"]), txt, cls)
+        cls, txt = _pill_pct(y_profit); kpi_card("Utilidad Bruta", money_fmt(k_cur["utilidad"]), txt, cls)
     with cols[2]:
-        cls, txt = _pill_pp(d_margin_pp); kpi_card("Margen de Utilidad", pct_fmt(k_cur["margen"]) if pd.notna(k_cur["margen"]) else "—", txt, cls)
+        cls, txt = _pill_pp(d_margin);  kpi_card("Margen de Utilidad", pct_fmt(k_cur["margen"]) if pd.notna(k_cur["margen"]) else "—", txt, cls)
     with cols[3]:
-        cls, txt = _pill_pct(y_txns); kpi_card("Transacciones", num_fmt(k_cur["txns"]), txt, cls)
-    with cols[4]:
         cls, txt = _pill_pct(y_ticket); kpi_card("Ticket Promedio", money_fmt(k_cur["ticket"]), txt, cls)
-    with cols[5]:
-        cls, txt = _pill_pp(d_desc_pp); kpi_card("% Descuento Promedio", pct_fmt(k_cur["descpct"]) if pd.notna(k_cur["descpct"]) else "—", txt, cls)
 
-    # Gráfica estática 12 meses con highlight rango
-    # Usar gráfica mejorada si está disponible
+    # ── Gráfico mensual 13 meses ─────────────────────────────
+    st.markdown("#### 📈 Evolución Mensual — Últimos 13 Meses")
     if GRAFICOS_MEJORADOS:
         st.plotly_chart(fig_grafica_mensual_mejorada(ms_cur, ventas_con_iva, max(1, m_start), m_end), use_container_width=True)
     else:
         st.plotly_chart(fig_hist_static(ms_cur, ventas_con_iva, m_start, m_end), use_container_width=True)
 
-    # Tabla resumen mensual con formato + YoY
-    st.markdown("### 📅 Evolución Mensual (Últimos 13 Meses)")
-    tbl = ms[[
-        "Mes", "Ventas_Cont", "Ventas_Cred", "Ventas_Total",
-        "Utilidad", "Margen", "TXNS", "Ticket", "DescPct", "Vendedores",
-        "YoY_Ventas_Total","YoY_Utilidad","YoY_TXNS","YoY_Ticket",
-        "YoY_Margen_pp","YoY_DescPct_pp"
-    ]].copy()
-    # Renombrar YoY columns a algo limpio
-    tbl = tbl.rename(columns={
-        "Ventas_Cont":"Ventas Contado",
-        "Ventas_Cred":"Ventas Crédito",
-        "Ventas_Total":"Ventas Total",
-        "TXNS":"Transacciones",
-        "Ticket":"Ticket Prom",
-        "DescPct":"% Desc",
-        "Vendedores":"Vendedores",
-        "YoY_Ventas_Total":"YoY Ventas",
-        "YoY_Utilidad":"YoY Utilidad",
-        "YoY_TXNS":"YoY Txns",
-        "YoY_Ticket":"YoY Ticket",
-        "YoY_Margen_pp":"YoY Margen",
-        "YoY_DescPct_pp":"YoY %Desc",
-    })
+    # ── Análisis inteligente + Alertas priorizadas ───────────
+    st.markdown("#### 🧠 Análisis Automático del Período")
+    analisis = analizar_cambios_yoy(k_cur, k_prev, ms_cur, ms_prev)
 
-    render_table(
-        tbl,
-        money_cols=["Ventas Contado","Ventas Crédito","Ventas Total","Utilidad","Ticket Prom"],
-        pct_cols=["Margen","% Desc"],
-        int_cols=["Transacciones","Vendedores"],
-        yoy_pct_cols=["YoY Ventas","YoY Utilidad","YoY Txns","YoY Ticket"],
-        yoy_pp_cols=["YoY Margen","YoY %Desc"],
-        height=340
-    )
+    for causa in analisis["causas_identificadas"]:
+        if causa["tipo"] == "excelente": st.success(f"**{causa['titulo']}** — {causa['descripcion']}")
+        elif causa["tipo"] == "positivo": st.info(f"**{causa['titulo']}** — {causa['descripcion']}")
+        elif causa["tipo"] == "alerta": st.warning(f"**{causa['titulo']}** — {causa['descripcion']}")
+        elif causa["tipo"] == "critico": st.error(f"**{causa['titulo']}** — {causa['descripcion']}")
+        else: st.info(f"**{causa['titulo']}** — {causa['descripcion']}")
 
-# ============================================================
-# TAB: Mix (Bloque 3)
-# ============================================================
-with tab_mix:
-    # KPIs m² y mix (5)
-    cols = st.columns(5)
-    # YoY para mix KPIs
-    y_m2_sales = yoy(k_cur["ventas_m2"], k_prev["ventas_m2"])
-    y_m2_profit = yoy(k_cur["utilidad_m2"], k_prev["utilidad_m2"])
-    y_sales_cont = yoy(k_cur["ventas_cont"], k_prev["ventas_cont"])
-    y_sales_cred = yoy(k_cur["ventas_cred"], k_prev["ventas_cred"])
-    cred_share = safe_div(k_cur["ventas_cred"], k_cur["ventas"])
-    cred_share_prev = safe_div(k_prev["ventas_cred"], k_prev["ventas"])
-    d_cred_pp = (cred_share - cred_share_prev) * 100 if (pd.notna(cred_share) and pd.notna(cred_share_prev)) else np.nan
+    if analisis["alertas"]:
+        with st.expander("⚠️ Alertas del período", expanded=True):
+            for a in analisis["alertas"]: st.markdown(f"- {a}")
+    if analisis["recomendaciones"]:
+        with st.expander("💡 Recomendaciones", expanded=False):
+            for r in analisis["recomendaciones"]: st.markdown(f"- {r}")
 
-    with cols[0]:
-        cls, txt = _pill_pct(y_m2_sales); kpi_card("Ventas por m²", money_fmt(k_cur["ventas_m2"]), txt, cls)
-    with cols[1]:
-        cls, txt = _pill_pct(y_m2_profit); kpi_card("Utilidad por m²", money_fmt(k_cur["utilidad_m2"]), txt, cls)
-    with cols[2]:
-        cls, txt = _pill_pct(y_sales_cont); kpi_card("Ventas Contado", money_fmt(k_cur["ventas_cont"]), txt, cls)
-    with cols[3]:
-        cls, txt = _pill_pct(y_sales_cred); kpi_card("Ventas Crédito", money_fmt(k_cur["ventas_cred"]), txt, cls)
-    with cols[4]:
-        cls, txt = _pill_pp(d_cred_pp); kpi_card("Participación crédito %", pct_fmt(cred_share) if pd.notna(cred_share) else "—", txt, cls)
+    # ── Top & Bottom vendedores (resumen rápido) ──────────────
+    st.markdown("#### 🏆 Performers del Período")
+    if not df_kpi.empty and "Vendedor_Nombre" in df_kpi.columns:
+        ventas_col_v = "Total_alloc" if ventas_con_iva else "Sub Total"
+        _vdf = df_kpi.groupby("Vendedor_Nombre", observed=True).agg(
+            Ventas=(ventas_col_v,"sum"), Utilidad=("Utilidad","sum"),
+            Txns=("DOC_KEY","nunique")).reset_index()
+        _vdf = _vdf[_vdf["Vendedor_Nombre"].fillna("").str.strip().ne("")]
+        _vdf = _vdf[~_vdf["Vendedor_Nombre"].str.upper().isin(["TODOS","SUPERVISOR"])]
+        if len(_vdf) > 0:
+            colA, colB = st.columns(2)
+            with colA:
+                st.markdown("**🥇 Mayores del período**")
+                tv  = _vdf.nlargest(1,"Ventas").iloc[0]
+                tu  = _vdf.nlargest(1,"Utilidad").iloc[0]
+                ttx = _vdf.nlargest(1,"Txns").iloc[0]
+                st.metric("💰 Mayor en ventas",    tv["Vendedor_Nombre"],  money_fmt(tv["Ventas"]))
+                st.metric("📈 Mayor en utilidad",  tu["Vendedor_Nombre"],  money_fmt(tu["Utilidad"]))
+                st.metric("🔄 Más transacciones",  ttx["Vendedor_Nombre"], f"{int(ttx['Txns']):,} txns")
+            with colB:
+                st.markdown("**📊 Menores del período**")
+                bv  = _vdf.nsmallest(1,"Ventas").iloc[0]
+                bu  = _vdf.nsmallest(1,"Utilidad").iloc[0]
+                _vdf["Ticket"] = _vdf["Ventas"] / _vdf["Txns"].replace(0, np.nan)
+                btk = _vdf.nsmallest(1,"Ticket").iloc[0]
+                st.metric("💰 Menor en ventas",    bv["Vendedor_Nombre"],  money_fmt(bv["Ventas"]))
+                st.metric("📈 Menor en utilidad",  bu["Vendedor_Nombre"],  money_fmt(bu["Utilidad"]))
+                st.metric("💳 Menor ticket prom",  btk["Vendedor_Nombre"], money_fmt(btk["Ticket"]))
 
 
-    # Opcional: excluir "OTROS" en Mix (Top Familias/Marcas + Treemap)
-    include_otros_mix = st.toggle(
-        "Incluir familia OTROS en Mix",
-        value=False,
-        help="Por defecto se excluye OTROS para que el Top 20 sea más útil. Actívalo si quieres que OTROS aparezca."
-    )
-    df_mix = df_kpi
-    df_mix_prev = df_prev
-    if not include_otros_mix:
-        _mask_otros = df_mix["Familia_Nombre"].fillna("").astype(str).str.strip().str.upper().eq("OTROS")
-        _mask_otros_prev = df_mix_prev["Familia_Nombre"].fillna("").astype(str).str.strip().str.upper().eq("OTROS")
-        df_mix = df_mix.loc[~_mask_otros].copy()
-        df_mix_prev = df_mix_prev.loc[~_mask_otros_prev].copy()
-
-
-    
-    # Top 20 Familias + Top 20 Marcas — estilo “comparativo” (como tu ejemplo)
-    st.markdown("### Top 20 — Familias (izquierda) vs Marcas (derecha)")
-
-    colA, colB = st.columns(2, gap="large")
-
-    # ---------- FAMILIAS ----------
-    with colA:
-        st.markdown("#### Familias — Ventas y Utilidad")
-        fam_rank = breakdown_dim(df_mix, df_mix_prev, "Familia_Nombre", ventas_con_iva, top_n=20)
-        if fam_rank.empty:
-            st.warning("No hay datos para Top Familias con los filtros actuales.")
-        else:
-            st.plotly_chart(
-                fig_bars_line_rank(
-                    fam_rank.rename(columns={"Familia_Nombre": "Familia"}), 
-                    "Familia", 
-                    ventas_con_iva,
-                    "Top 20 Familias — Ventas y Utilidad"
-                ),
-                use_container_width=True
-            )
-
-    # ---------- MARCAS ----------
-    with colB:
-        st.markdown("#### Marcas — Ventas y Utilidad")
-        marca_rank = breakdown_dim(df_mix, df_mix_prev, "Marca_Nombre", ventas_con_iva, top_n=20)
-        if marca_rank.empty:
-            st.warning("No hay datos para Top Marcas con los filtros actuales.")
-        else:
-            st.plotly_chart(
-                fig_bars_line_rank(
-                    marca_rank.rename(columns={"Marca_Nombre": "Marca"}), 
-                    "Marca", 
-                    ventas_con_iva,
-                    "Top 20 Marcas — Ventas y Utilidad"
-                ),
-                use_container_width=True
-            )
-
-    # ---------- TABLAS (debajo, lado a lado) ----------
-    colTA, colTB = st.columns(2, gap="large")
-
-    with colTA:
-        st.markdown("#### Tabla — Familias (Top 20)")
-        if 'fam_rank' in locals() and not fam_rank.empty:
-            fam_tbl = fam_rank.rename(columns={
-                "Familia_Nombre":"Familia",
-                "TXNS":"TXNS",
-                "YoY_Ventas":"YoY Ventas",
-                "YoY_Utilidad":"YoY Utilidad",
-                "YoY_TXNS":"YoY Txns",
-                "YoY_Margen_pp":"YoY Margen",
-            })
-            render_table(
-                fam_tbl[["Familia","Ventas","Utilidad","TXNS","Margen","YoY Ventas","YoY Utilidad","YoY Txns","YoY Margen"]],
-                money_cols=["Ventas","Utilidad"],
-                pct_cols=["Margen"],
-                int_cols=["TXNS"],
-                yoy_pct_cols=["YoY Ventas","YoY Utilidad","YoY Txns"],
-                yoy_pp_cols=["YoY Margen"],
-                height=520
-            )
-
-    with colTB:
-        st.markdown("#### Tabla — Marcas (Top 20)")
-        if 'marca_rank' in locals() and not marca_rank.empty:
-            marca_tbl = marca_rank.rename(columns={
-                "Marca_Nombre":"Marca",
-                "TXNS":"TXNS",
-                "YoY_Ventas":"YoY Ventas",
-                "YoY_Utilidad":"YoY Utilidad",
-                "YoY_TXNS":"YoY Txns",
-                "YoY_Margen_pp":"YoY Margen",
-            })
-            render_table(
-                marca_tbl[["Marca","Ventas","Utilidad","TXNS","Margen","YoY Ventas","YoY Utilidad","YoY Txns","YoY Margen"]],
-                money_cols=["Ventas","Utilidad"],
-                pct_cols=["Margen"],
-                int_cols=["TXNS"],
-                yoy_pct_cols=["YoY Ventas","YoY Utilidad","YoY Txns"],
-                yoy_pp_cols=["YoY Margen"],
-                height=520
-            )
-
-
-# Treemap Familia → Marca (participación)
-    st.markdown("### Treemap — Familia → Marca (participación)")
-    if df_mix.empty:
-        st.warning("No hay datos para Treemap con los filtros actuales.")
-    else:
-        ventas_col = _ventas_col(ventas_con_iva)
-        tm = (df_mix.groupby(["Familia_Nombre","Marca_Nombre"], observed=True)
-                    .agg(Ventas=(ventas_col,"sum"))
-                    .reset_index())
-        tm = tm[tm["Ventas"] > 0]
-        if tm.empty:
-            st.warning("Sin ventas > 0 para Treemap con filtros actuales.")
-        else:
-            fig_tm = px.treemap(tm, path=["Familia_Nombre","Marca_Nombre"], values="Ventas")
-            fig_tm.update_layout(height=620, margin=dict(l=10,r=10,t=40,b=10))
-            st.plotly_chart(fig_tm, use_container_width=True)
-
-# ============================================================
-# TAB: Productividad (Bloque 2)
-# ============================================================
-with tab_prod:
-    omit_supervisor = st.toggle("Omitir Supervisor", value=True, key=make_key("omit_sup"))
-
-    df_p = df_kpi.copy()
-    df_p_prev = df_prev.copy()
-    if omit_supervisor:
-        # filtra cualquier vendedor con 'SUPERVISOR'
-        mask = _clean_text_series(df_p["Vendedor_Nombre"]).str.contains("SUPERVISOR", na=False)
-        df_p = df_p[~mask]
-        mask2 = _clean_text_series(df_p_prev["Vendedor_Nombre"]).str.contains("SUPERVISOR", na=False)
-        df_p_prev = df_p_prev[~mask2]
-
-    vend_count = count_vendedores_activos(df_p)
-    vend_count_prev = count_vendedores_activos(df_p_prev)
-
-    k_p = kpis_from_df(df_p, ventas_con_iva, m2)
-    k_p_prev = kpis_from_df(df_p_prev, ventas_con_iva, m2)
-
-    # Productividad KPIs (6)
-    cols = st.columns(6)
-
-    ventas_x_emp = safe_div(k_p["ventas"], vend_count) if vend_count else np.nan
-    ventas_x_emp_prev = safe_div(k_p_prev["ventas"], vend_count_prev) if vend_count_prev else np.nan
-    y_vxe = yoy(ventas_x_emp, ventas_x_emp_prev)
-
-    ops_x_emp = safe_div(k_p["txns"], vend_count) if vend_count else np.nan
-    ops_x_emp_prev = safe_div(k_p_prev["txns"], vend_count_prev) if vend_count_prev else np.nan
-    y_ope = yoy(ops_x_emp, ops_x_emp_prev)
-
-    ticket_x_emp = safe_div(ventas_x_emp, ops_x_emp) if (pd.notna(ventas_x_emp) and pd.notna(ops_x_emp)) else np.nan
-    ticket_x_emp_prev = safe_div(ventas_x_emp_prev, ops_x_emp_prev) if (pd.notna(ventas_x_emp_prev) and pd.notna(ops_x_emp_prev)) else np.nan
-    y_txe = yoy(ticket_x_emp, ticket_x_emp_prev)
-
-    util_x_emp = safe_div(k_p["utilidad"], vend_count) if vend_count else np.nan
-    util_x_emp_prev = safe_div(k_p_prev["utilidad"], vend_count_prev) if vend_count_prev else np.nan
-    y_uxe = yoy(util_x_emp, util_x_emp_prev)
-
-    margen_emp = safe_div(util_x_emp, safe_div(k_p["subtotal"], vend_count) if vend_count else np.nan)
-    margen_emp_prev = safe_div(util_x_emp_prev, safe_div(k_p_prev["subtotal"], vend_count_prev) if vend_count_prev else np.nan)
-    d_marg_emp_pp = (margen_emp - margen_emp_prev) * 100 if (pd.notna(margen_emp) and pd.notna(margen_emp_prev)) else np.nan
-
-    # SKUs por ticket global
-    if df_p.empty:
-        skus_ticket = np.nan
-        skus_ticket_prev = np.nan
-    else:
-        # unique SKU per doc or lines per doc
-        if df_p["SKU_KEY"].notna().any():
-            skus_ticket = safe_div(df_p["SKU_KEY"].dropna().nunique(), k_p["txns"])
-        else:
-            skus_ticket = safe_div(len(df_p), k_p["txns"])
-        if df_p_prev.empty:
-            skus_ticket_prev = np.nan
-        else:
-            if df_p_prev["SKU_KEY"].notna().any():
-                skus_ticket_prev = safe_div(df_p_prev["SKU_KEY"].dropna().nunique(), k_p_prev["txns"])
-            else:
-                skus_ticket_prev = safe_div(len(df_p_prev), k_p_prev["txns"])
-    y_spt = yoy(skus_ticket, skus_ticket_prev)
-
-    with cols[0]:
-        cls, txt = _pill_pct(y_vxe); kpi_card("Ventas por Empleado", money_fmt(ventas_x_emp) if pd.notna(ventas_x_emp) else "—", txt, cls)
-    with cols[1]:
-        cls, txt = _pill_pct(y_ope); kpi_card("Operaciones por Empleado", num_fmt(ops_x_emp) if pd.notna(ops_x_emp) else "—", txt, cls)
-    with cols[2]:
-        cls, txt = _pill_pct(y_txe); kpi_card("Ticket Prom por Empleado", money_fmt(ticket_x_emp) if pd.notna(ticket_x_emp) else "—", txt, cls)
-    with cols[3]:
-        cls, txt = _pill_pct(y_uxe); kpi_card("Utilidad por Empleado", money_fmt(util_x_emp) if pd.notna(util_x_emp) else "—", txt, cls)
-    with cols[4]:
-        cls, txt = _pill_pp(d_marg_emp_pp); kpi_card("Margen por Empleado", pct_fmt(margen_emp) if pd.notna(margen_emp) else "—", txt, cls)
-    with cols[5]:
-        cls, txt = _pill_pct(y_spt); kpi_card("SKU’s por Ticket", num_fmt(skus_ticket) if pd.notna(skus_ticket) else "—", txt, cls)
-
-    # Top vendedores (barras apiladas cred/cont + línea utilidad)
-    st.markdown("### Top vendedores")
-    vdf = vendor_metrics(df_p, df_p_prev, ventas_con_iva, top_n=30)
-    if vdf.empty:
-        st.warning("No hay datos de vendedores con los filtros actuales.")
-    else:
-        st.plotly_chart(fig_top_vendedores_mejorada(vdf, top_n=20) if GRAFICOS_MEJORADOS else fig_top_vendedores(vdf.rename(columns={"Ventas_Cred":"Ventas_Cred","Ventas_Cont":"Ventas_Cont"}), ventas_con_iva), use_container_width=True)
-
-    # Matriz 2x2 (cuadrantes)
-    st.markdown("### Matriz 2×2 — Ticket vs Transacciones")
-    if vdf.empty:
-        st.info("Sin datos para matriz 2×2.")
-    else:
-        # preparar df para cuadrantes
-        q = vdf[["Vendedor","Ventas","Utilidad","TXNS","Ticket"]].copy()
-        q["Cuadrante"] = ""
-        med_x = float(np.nanmedian(q["TXNS"])) if len(q) else 0.0
-        med_y = float(np.nanmedian(q["Ticket"])) if len(q) else 0.0
-        q["Cuadrante"] = q.apply(lambda r:
-                                 "⭐ Estrellas" if (r["TXNS"]>=med_x and r["Ticket"]>=med_y) else
-                                 "Volumen" if (r["TXNS"]>=med_x and r["Ticket"]<med_y) else
-                                 "Oportunidad" if (r["TXNS"]<med_x and r["Ticket"]>=med_y) else
-                                 "Bajo desempeño", axis=1)
-        st.plotly_chart(fig_quadrants_mejorada(q) if GRAFICOS_MEJORADOS else fig_quadrants(q.rename(columns={"Ventas":"Ventas","Utilidad":"Utilidad","TXNS":"TXNS","Ticket":"Ticket"})), use_container_width=True)
-
-        # Tabla vendedores
-        st.markdown("### Tabla de vendedores")
-        vtbl = vdf.copy()
-        vtbl = vtbl.rename(columns={
-            "TXNS":"Transacciones",
-            "Ticket":"Ticket Prom",
-            "YoY_Ventas":"YoY Ventas",
-            "YoY_Utilidad":"YoY Utilidad",
-            "YoY_TXNS":"YoY Txns",
-            "YoY_Ticket":"YoY Ticket",
-            "YoY_Margen_pp":"YoY Margen",
-        })
-        # agregamos cuadrante al final
-        vtbl = vtbl.merge(q[["Vendedor","Cuadrante"]], on="Vendedor", how="left")
-
-        render_table(
-            vtbl[["Vendedor","Ventas","Utilidad","Margen","Transacciones","Ticket Prom","SKUs_x_Ticket","Cuadrante","YoY Ventas","YoY Utilidad","YoY Txns","YoY Ticket","YoY Margen"]],
-            money_cols=["Ventas","Utilidad","Ticket Prom"],
-            pct_cols=["Margen"],
-            int_cols=["Transacciones"],
-            yoy_pct_cols=["YoY Ventas","YoY Utilidad","YoY Txns","YoY Ticket"],
-            yoy_pp_cols=["YoY Margen"],
-            height=560
-        )
-
-# ============================================================
-# TAB: Insights (respeta filtro actual)
-# ============================================================
-with tab_insights:
-    st.markdown("### Insights")
-    insight_cards(k_cur, k_prev, ventas_con_iva)
-
-    st.markdown("#### Top movers vs LY (según filtros actuales)")
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.markdown("**Familias — Δ Ventas (rango)**")
-        fam = breakdown_dim(df_mix, df_mix_prev, "Familia_Nombre", ventas_con_iva, top_n=50)
-        if fam.empty:
-            st.info("Sin datos.")
-        else:
-            fam["Δ Ventas"] = fam["Ventas"] - fam["Ventas_LY"].fillna(0.0)
-            up = fam.sort_values("Δ Ventas", ascending=False).head(8)[["Familia_Nombre","Δ Ventas","YoY_Ventas"]].rename(columns={"Familia_Nombre":"Familia"})
-            render_table(up, money_cols=["Δ Ventas"], yoy_pct_cols=["YoY_Ventas"], height=320)
-
-    with c2:
-        st.markdown("**Marcas — Δ Ventas (rango)**")
-        mk = breakdown_dim(df_mix, df_mix_prev, "Marca_Nombre", ventas_con_iva, top_n=50)
-        if mk.empty:
-            st.info("Sin datos.")
-        else:
-            mk["Δ Ventas"] = mk["Ventas"] - mk["Ventas_LY"].fillna(0.0)
-            up = mk.sort_values("Δ Ventas", ascending=False).head(8)[["Marca_Nombre","Δ Ventas","YoY_Ventas"]].rename(columns={"Marca_Nombre":"Marca"})
-            render_table(up, money_cols=["Δ Ventas"], yoy_pct_cols=["YoY_Ventas"], height=320)
-
-    st.markdown("#### Tabla soporte (rango)")
-    # Desglose por mes del rango seleccionado (respeta filtros actuales)
-    soporte_m = ms[(ms["MesNum"] >= m_start) & (ms["MesNum"] <= m_end)].copy()
-    cols = [
-        "Mes",
-        "Ventas_Total",
-        "Utilidad",
-        "Margen",
-        "DescPct",
-        "TXNS",
-        "Ticket",
-        "Ventas_Cred",
-        "Ventas_Cont",
-        "YoY_Ventas_Total",
-        "YoY_Utilidad",
-        "YoY_TXNS",
-        "YoY_Ticket",
-        "YoY_Margen",
-        "YoY_DescPct",
-    ]
-    for c in cols:
-        if c not in soporte_m.columns:
-            soporte_m[c] = np.nan
-
-    soporte_show = soporte_m[cols].copy().rename(
-        columns={
-            "Ventas_Total": "Ventas",
-            "Ventas_Cred": "Ventas Crédito",
-            "Ventas_Cont": "Ventas Contado",
-            "DescPct": "% Desc",
-            "TXNS": "Transacciones",
-            "Ticket": "Ticket",
-            "YoY_Ventas_Total": "YoY Ventas",
-            "YoY_Utilidad": "YoY Utilidad",
-            "YoY_TXNS": "YoY Txns",
-            "YoY_Ticket": "YoY Ticket",
-            "YoY_Margen": "YoY Margen",
-            "YoY_DescPct": "YoY %Desc",
-        }
-    )
-
-    render_table(
-        soporte_show,
-        money_cols=["Ventas", "Ventas Crédito", "Ventas Contado", "Utilidad", "Ticket"],
-        pct_cols=["Margen", "% Desc"],
-        int_cols=["Transacciones"],
-        yoy_pct_cols=["YoY Ventas", "YoY Utilidad", "YoY Txns", "YoY Ticket"],
-        yoy_pp_cols=["YoY Margen", "YoY %Desc"],
-        height=260,
-    )
-
-
-# ============================================================
-# TAB 5: ANÁLISIS PERSONALIZADO (POWER BI)
-# ============================================================
-with tab_powerbi:
-    st.markdown("## 🔧 Herramientas de Análisis Personalizado")
-    st.markdown("*Crea tus propios análisis como en Power BI*")
-    
-    # Sub-tabs para cada herramienta
-    subtab1, subtab2, subtab3, subtab4, subtab5 = st.tabs([
-        "📊 Constructor de Tablas",
-        "📈 Gráficas Interactivas",
-        "🔍 Explorador Drill-Down",
-        "📅 Comparador de Períodos",
-        "📊 Comparador YoY Completo"
+# ══════════════════════════════════════════════════════════════
+# TAB 2 — ANÁLISIS DE NEGOCIO
+# Sub-tabs: Ventas & Margen | Mix | Equipo
+# ══════════════════════════════════════════════════════════════
+with tab_negocio:
+    sub_ventas, sub_mix, sub_equipo = st.tabs([
+        "💰 Ventas & Margen",
+        "🏪 Mix de Productos",
+        "👥 Equipo de Ventas"
     ])
-    
-    # --------------------------------------------------------
-    # SUB-TAB 1: CONSTRUCTOR DE TABLAS
-    # --------------------------------------------------------
-    with subtab1:
-        st.markdown("### 📊 Constructor de Tablas Personalizado")
-        st.markdown("""
-        Selecciona las columnas que quieres ver, aplica agregaciones y exporta tus resultados.
-        """)
-        
-        # Selector de dataset
-        dataset_opcion = st.radio(
-            "Selecciona el dataset:",
-            ["Datos del período actual", "Datos del año completo", "Resumen mensual"],
-            horizontal=True
+
+    # ── SUB-TAB: VENTAS & MARGEN ──────────────────────────────
+    with sub_ventas:
+        y_sales   = yoy(k_cur["ventas"],   k_prev["ventas"])
+        y_profit  = yoy(k_cur["utilidad"], k_prev["utilidad"])
+        d_margin  = (k_cur["margen"] - k_prev["margen"]) * 100 if (pd.notna(k_cur["margen"]) and pd.notna(k_prev["margen"])) else np.nan
+        y_txns    = yoy(k_cur["txns"],     k_prev["txns"])
+        y_ticket  = yoy(k_cur["ticket"],   k_prev["ticket"])
+        d_desc_pp = (k_cur["descpct"] - k_prev["descpct"]) * 100 if (pd.notna(k_cur["descpct"]) and pd.notna(k_prev["descpct"])) else np.nan
+
+        cols = st.columns(6)
+        with cols[0]:
+            cls, txt = _pill_pct(y_sales);   kpi_card("Ventas Totales" + (" CON IVA" if ventas_con_iva else " SIN IVA"), money_fmt(k_cur["ventas"]), txt, cls)
+        with cols[1]:
+            cls, txt = _pill_pct(y_profit);  kpi_card("Utilidad (SIN IVA)", money_fmt(k_cur["utilidad"]), txt, cls)
+        with cols[2]:
+            cls, txt = _pill_pp(d_margin);   kpi_card("Margen", pct_fmt(k_cur["margen"]) if pd.notna(k_cur["margen"]) else "—", txt, cls)
+        with cols[3]:
+            cls, txt = _pill_pct(y_txns);    kpi_card("Transacciones", num_fmt(k_cur["txns"]), txt, cls)
+        with cols[4]:
+            cls, txt = _pill_pct(y_ticket);  kpi_card("Ticket Promedio", money_fmt(k_cur["ticket"]), txt, cls)
+        with cols[5]:
+            cls, txt = _pill_pp(d_desc_pp);  kpi_card("% Descuento", pct_fmt(k_cur["descpct"]) if pd.notna(k_cur["descpct"]) else "—", txt, cls)
+
+        # Tabla mensual compacta (solo columnas clave)
+        st.markdown("### 📅 Evolución Mensual")
+        tbl = ms[[
+            "Mes","Ventas_Cont","Ventas_Cred","Ventas_Total",
+            "Utilidad","Margen","TXNS","Ticket",
+            "YoY_Ventas_Total","YoY_Utilidad","YoY_Margen_pp"
+        ]].copy().rename(columns={
+            "Ventas_Cont":"Contado","Ventas_Cred":"Crédito",
+            "Ventas_Total":"Ventas Total","TXNS":"Txns",
+            "Ticket":"Ticket Prom","YoY_Ventas_Total":"YoY Ventas",
+            "YoY_Utilidad":"YoY Utilidad","YoY_Margen_pp":"YoY Margen"
+        })
+        render_table(tbl,
+            money_cols=["Contado","Crédito","Ventas Total","Utilidad","Ticket Prom"],
+            pct_cols=["Margen"], int_cols=["Txns"],
+            yoy_pct_cols=["YoY Ventas","YoY Utilidad"],
+            yoy_pp_cols=["YoY Margen"], height=340)
+
+    # ── SUB-TAB: MIX DE PRODUCTOS ─────────────────────────────
+    with sub_mix:
+        # KPIs de mix (contado/crédito + m²)
+        y_m2_sales  = yoy(k_cur["ventas_m2"],   k_prev["ventas_m2"])
+        y_m2_profit = yoy(k_cur["utilidad_m2"], k_prev["utilidad_m2"])
+        y_sales_cont = yoy(k_cur["ventas_cont"], k_prev["ventas_cont"])
+        y_sales_cred = yoy(k_cur["ventas_cred"], k_prev["ventas_cred"])
+        cred_share      = safe_div(k_cur["ventas_cred"], k_cur["ventas"])
+        cred_share_prev = safe_div(k_prev["ventas_cred"], k_prev["ventas"])
+        d_cred_pp = (cred_share - cred_share_prev) * 100 if (pd.notna(cred_share) and pd.notna(cred_share_prev)) else np.nan
+
+        cols = st.columns(5)
+        with cols[0]: cls,txt=_pill_pct(y_m2_sales);  kpi_card("Ventas/m²",   money_fmt(k_cur["ventas_m2"]),   txt,cls)
+        with cols[1]: cls,txt=_pill_pct(y_m2_profit); kpi_card("Utilidad/m²", money_fmt(k_cur["utilidad_m2"]), txt,cls)
+        with cols[2]: cls,txt=_pill_pct(y_sales_cont);kpi_card("Ventas Contado", money_fmt(k_cur["ventas_cont"]),txt,cls)
+        with cols[3]: cls,txt=_pill_pct(y_sales_cred);kpi_card("Ventas Crédito", money_fmt(k_cur["ventas_cred"]),txt,cls)
+        with cols[4]: cls,txt=_pill_pp(d_cred_pp);    kpi_card("% Crédito",    pct_fmt(cred_share) if pd.notna(cred_share) else "—",txt,cls)
+
+        include_otros_mix = st.toggle("Incluir familia OTROS", value=False, key="mix_otros_neg")
+        df_mix     = df_kpi.copy()
+        df_mix_prev = df_prev.copy()
+        if not include_otros_mix:
+            _m = df_mix["Familia_Nombre"].fillna("").str.strip().str.upper().eq("OTROS")
+            df_mix = df_mix.loc[~_m].copy()
+            _m2 = df_mix_prev["Familia_Nombre"].fillna("").str.strip().str.upper().eq("OTROS")
+            df_mix_prev = df_mix_prev.loc[~_m2].copy()
+
+        st.markdown("### Top 20 — Familias vs Marcas")
+        colA, colB = st.columns(2, gap="large")
+
+        with colA:
+            fam_rank = breakdown_dim(df_mix, df_mix_prev, "Familia_Nombre", ventas_con_iva, top_n=20)
+            if fam_rank.empty: st.warning("Sin datos de familias.")
+            else:
+                st.plotly_chart(fig_bars_line_rank(fam_rank.rename(columns={"Familia_Nombre":"Familia"}),
+                    "Familia", ventas_con_iva, "Top 20 Familias"), use_container_width=True)
+
+        with colB:
+            marca_rank = breakdown_dim(df_mix, df_mix_prev, "Marca_Nombre", ventas_con_iva, top_n=20)
+            if marca_rank.empty: st.warning("Sin datos de marcas.")
+            else:
+                st.plotly_chart(fig_bars_line_rank(marca_rank.rename(columns={"Marca_Nombre":"Marca"}),
+                    "Marca", ventas_con_iva, "Top 20 Marcas"), use_container_width=True)
+
+        # Tablas compactas
+        colTA, colTB = st.columns(2, gap="large")
+        with colTA:
+            if "fam_rank" in dir() and not fam_rank.empty:
+                ft = fam_rank.rename(columns={"Familia_Nombre":"Familia","TXNS":"Txns",
+                    "YoY_Ventas":"YoY V","YoY_Utilidad":"YoY U","YoY_Margen_pp":"YoY M"})
+                render_table(ft[["Familia","Ventas","Utilidad","Margen","YoY V","YoY U","YoY M"]],
+                    money_cols=["Ventas","Utilidad"], pct_cols=["Margen"],
+                    yoy_pct_cols=["YoY V","YoY U"], yoy_pp_cols=["YoY M"], height=480)
+        with colTB:
+            if "marca_rank" in dir() and not marca_rank.empty:
+                mt = marca_rank.rename(columns={"Marca_Nombre":"Marca","TXNS":"Txns",
+                    "YoY_Ventas":"YoY V","YoY_Utilidad":"YoY U","YoY_Margen_pp":"YoY M"})
+                render_table(mt[["Marca","Ventas","Utilidad","Margen","YoY V","YoY U","YoY M"]],
+                    money_cols=["Ventas","Utilidad"], pct_cols=["Margen"],
+                    yoy_pct_cols=["YoY V","YoY U"], yoy_pp_cols=["YoY M"], height=480)
+
+        # ── TREEMAP CON VARIACIÓN YoY ────────────────────────────
+        st.markdown("### Treemap — Participación Familia → Marca")
+
+        modo_treemap = st.radio(
+            "Colorear por:",
+            ["📊 Ventas (participación)", "📈 Variación vs año anterior (%)"],
+            horizontal=True,
+            key="treemap_modo"
         )
-        
-        if dataset_opcion == "Datos del período actual":
+
+        if not df_mix.empty:
+            ventas_col_tm = _ventas_col(ventas_con_iva)
+
+            # Calcular ventas actuales
+            tm = (df_mix.groupby(["Familia_Nombre","Marca_Nombre"], observed=True)
+                        .agg(Ventas=(ventas_col_tm,"sum"),
+                             Utilidad=("Utilidad","sum"))
+                        .reset_index())
+
+            # Calcular ventas año anterior para variación
+            tm_prev = (df_mix_prev.groupby(["Familia_Nombre","Marca_Nombre"], observed=True)
+                                  .agg(Ventas_LY=(ventas_col_tm,"sum"))
+                                  .reset_index())
+
+            tm = tm.merge(tm_prev, on=["Familia_Nombre","Marca_Nombre"], how="left")
+            tm["Ventas_LY"] = tm["Ventas_LY"].fillna(0)
+            tm["YoY_Pct"] = ((tm["Ventas"] - tm["Ventas_LY"]) / tm["Ventas_LY"].replace(0, float("nan"))) * 100
+            tm["Margen"] = (tm["Utilidad"] / tm["Ventas"].replace(0, float("nan")) * 100).round(1)
+            tm = tm[tm["Ventas"] > 0]
+
+            if not tm.empty:
+                # Texto hover personalizado
+                # YoY por concepto
+                tm["YoY_Ventas"] = ((tm["Ventas"] - tm["Ventas_LY"]) / tm["Ventas_LY"].replace(0, float("nan"))) * 100
+
+                tm_util_prev = (df_mix_prev.groupby(["Familia_Nombre","Marca_Nombre"], observed=True)
+                                           .agg(Utilidad_LY=("Utilidad","sum")).reset_index())
+                tm = tm.merge(tm_util_prev, on=["Familia_Nombre","Marca_Nombre"], how="left")
+                tm["Utilidad_LY"] = tm["Utilidad_LY"].fillna(0)
+                tm["YoY_Utilidad"] = ((tm["Utilidad"] - tm["Utilidad_LY"]) / tm["Utilidad_LY"].replace(0, float("nan"))) * 100
+
+                tm_marc_prev = (df_mix_prev.groupby(["Familia_Nombre","Marca_Nombre"], observed=True)
+                                           .agg(Sub_LY=("Sub Total","sum")).reset_index())
+                tm = tm.merge(tm_marc_prev, on=["Familia_Nombre","Marca_Nombre"], how="left")
+                tm["Margen_LY"] = (tm["Utilidad_LY"] / tm["Sub_LY"].replace(0, float("nan")) * 100)
+                tm["YoY_Margen_pp"] = tm["Margen"] - tm["Margen_LY"]
+
+                def _fmt_yoy(val, tipo="pct"):
+                    if pd.isna(val): return "<span style='color:#9CA3AF'>— sin dato</span>"
+                    if tipo == "pct":
+                        color = "#4ADE80" if val >= 0 else "#F87171"
+                        flecha = "▲" if val >= 0 else "▼"
+                        return f"<span style='color:{color};font-weight:600'>{flecha} {val:+.1f}%</span>"
+                    else:  # pp
+                        color = "#4ADE80" if val >= 0 else "#F87171"
+                        flecha = "▲" if val >= 0 else "▼"
+                        return f"<span style='color:{color};font-weight:600'>{flecha} {val:+.1f} pp</span>"
+
+                tm["hover"] = tm.apply(lambda r: (
+                    f"<b style='font-size:13px'>{r['Marca_Nombre']}</b><br>"
+                    f"<span style='color:#94A3B8'>Familia: {r['Familia_Nombre']}</span><br>"
+                    f"─────────────────────<br>"
+                    f"💰 Ventas: <b>${r['Ventas']:,.0f}</b>  {_fmt_yoy(r['YoY_Ventas'])}<br>"
+                    f"📈 Utilidad: <b>${r['Utilidad']:,.0f}</b>  {_fmt_yoy(r['YoY_Utilidad'])}<br>"
+                    f"📊 Margen: <b>{r['Margen']:.1f}%</b>  {_fmt_yoy(r['YoY_Margen_pp'], 'pp')}"
+                ), axis=1)
+
+                if "participación" in modo_treemap:
+                    # Escala multicolor por familia para distinguir rangos
+                    fig_tm = px.treemap(
+                        tm,
+                        path=["Familia_Nombre", "Marca_Nombre"],
+                        values="Ventas",
+                        color="Ventas",
+                        color_continuous_scale=[
+                            [0.0,  "#374151"],
+                            [0.2,  "#93C5FD"],
+                            [0.4,  "#3B82F6"],
+                            [0.6,  "#1D4ED8"],
+                            [0.8,  "#15803D"],
+                            [1.0,  "#14532D"]
+                        ],
+                        custom_data=["hover"]
+                    )
+                    fig_tm.update_traces(
+                        hovertemplate="%{customdata[0]}<extra></extra>",
+                        textfont=dict(size=12, color="white"),
+                        marker=dict(line=dict(width=2, color="rgba(0,0,0,0.4)"))
+                    )
+                    fig_tm.update_coloraxes(
+                        colorbar=dict(
+                            title="Ventas",
+                            tickformat="$,.0f",
+                            thickness=14,
+                            len=0.8
+                        )
+                    )
+                    titulo_tm = "Participación por Ventas — Gris (bajo) → Verde oscuro (alto)"
+
+                else:
+                    # Colorear por variación YoY: rojo=caída, gris=sin dato, verde=subida
+                    tm["YoY_clip"] = tm["YoY_Pct"].clip(-50, 50)
+
+                    fig_tm = px.treemap(
+                        tm,
+                        path=["Familia_Nombre", "Marca_Nombre"],
+                        values="Ventas",
+                        color="YoY_clip",
+                        color_continuous_scale=[
+                            [0.0,  "#7F1D1D"],
+                            [0.2,  "#EF4444"],
+                            [0.4,  "#F87171"],
+                            [0.5,  "#6B7280"],
+                            [0.6,  "#4ADE80"],
+                            [0.8,  "#16A34A"],
+                            [1.0,  "#14532D"]
+                        ],
+                        range_color=[-50, 50],
+                        custom_data=["hover"]
+                    )
+                    fig_tm.update_traces(
+                        hovertemplate="%{customdata[0]}<extra></extra>",
+                        textfont=dict(size=12, color="white"),
+                        marker=dict(line=dict(width=2, color="rgba(0,0,0,0.4)"))
+                    )
+                    fig_tm.update_coloraxes(
+                        colorbar=dict(
+                            title="% vs LY",
+                            ticksuffix="%",
+                            thickness=14,
+                            len=0.8
+                        )
+                    )
+                    titulo_tm = "Variación vs Año Anterior — Rojo (caída) → Verde (crecimiento)"
+
+                fig_tm.update_layout(
+                    title=dict(text=f"<b>Treemap: Familia → Marca</b><br><sup>{titulo_tm}</sup>",
+                               font=dict(size=14, color="#F8FAFC")),
+                    height=660,
+                    margin=dict(l=10, r=10, t=60, b=10),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    font=dict(color="#F8FAFC")
+                )
+                st.plotly_chart(fig_tm, use_container_width=True)
+
+                # Leyenda rápida debajo
+                if "Variación" in modo_treemap:
+                    col_l1, col_l2, col_l3 = st.columns(3)
+                    with col_l1:
+                        st.markdown("🔴 **Rojo** — Caída vs año anterior")
+                    with col_l2:
+                        st.markdown("⬛ **Gris** — Sin cambio o sin dato")
+                    with col_l3:
+                        st.markdown("🟢 **Verde** — Crecimiento vs año anterior")
+
+    # ── SUB-TAB: EQUIPO DE VENTAS ─────────────────────────────
+    with sub_equipo:
+        omit_supervisor = st.toggle("Omitir Supervisor", value=True, key="omit_sup_neg")
+        df_p = df_kpi.copy()
+        df_p_prev = df_prev.copy()
+        if omit_supervisor:
+            _m = _clean_text_series(df_p["Vendedor_Nombre"]).str.contains("SUPERVISOR", na=False)
+            df_p = df_p[~_m]
+            _m2 = _clean_text_series(df_p_prev["Vendedor_Nombre"]).str.contains("SUPERVISOR", na=False)
+            df_p_prev = df_p_prev[~_m2]
+
+        vend_count      = count_vendedores_activos(df_p)
+        vend_count_prev = count_vendedores_activos(df_p_prev)
+        k_p      = kpis_from_df(df_p,      ventas_con_iva, m2)
+        k_p_prev = kpis_from_df(df_p_prev, ventas_con_iva, m2)
+
+        ventas_x_emp      = safe_div(k_p["ventas"],      vend_count)      if vend_count      else np.nan
+        ventas_x_emp_prev = safe_div(k_p_prev["ventas"], vend_count_prev) if vend_count_prev else np.nan
+        ops_x_emp      = safe_div(k_p["txns"],      vend_count)      if vend_count      else np.nan
+        ops_x_emp_prev = safe_div(k_p_prev["txns"], vend_count_prev) if vend_count_prev else np.nan
+        util_x_emp      = safe_div(k_p["utilidad"],      vend_count)      if vend_count      else np.nan
+        util_x_emp_prev = safe_div(k_p_prev["utilidad"], vend_count_prev) if vend_count_prev else np.nan
+        ticket_x_emp      = safe_div(ventas_x_emp,      ops_x_emp)      if (pd.notna(ventas_x_emp)      and pd.notna(ops_x_emp))      else np.nan
+        ticket_x_emp_prev = safe_div(ventas_x_emp_prev, ops_x_emp_prev) if (pd.notna(ventas_x_emp_prev) and pd.notna(ops_x_emp_prev)) else np.nan
+        margen_emp      = safe_div(util_x_emp,      safe_div(k_p["subtotal"],      vend_count)      if vend_count      else np.nan)
+        margen_emp_prev = safe_div(util_x_emp_prev, safe_div(k_p_prev["subtotal"], vend_count_prev) if vend_count_prev else np.nan)
+        d_marg_emp_pp   = (margen_emp - margen_emp_prev) * 100 if (pd.notna(margen_emp) and pd.notna(margen_emp_prev)) else np.nan
+
+        cols = st.columns(5)
+        with cols[0]: cls,txt=_pill_pct(yoy(ventas_x_emp,ventas_x_emp_prev)); kpi_card("Ventas/Empleado", money_fmt(ventas_x_emp) if pd.notna(ventas_x_emp) else "—",txt,cls)
+        with cols[1]: cls,txt=_pill_pct(yoy(ops_x_emp,ops_x_emp_prev));       kpi_card("Ops/Empleado",    num_fmt(ops_x_emp)    if pd.notna(ops_x_emp)    else "—",txt,cls)
+        with cols[2]: cls,txt=_pill_pct(yoy(ticket_x_emp,ticket_x_emp_prev)); kpi_card("Ticket/Empleado", money_fmt(ticket_x_emp) if pd.notna(ticket_x_emp) else "—",txt,cls)
+        with cols[3]: cls,txt=_pill_pct(yoy(util_x_emp,util_x_emp_prev));     kpi_card("Utilidad/Empleado",money_fmt(util_x_emp) if pd.notna(util_x_emp)   else "—",txt,cls)
+        with cols[4]: cls,txt=_pill_pp(d_marg_emp_pp);                        kpi_card("Margen/Empleado", pct_fmt(margen_emp)   if pd.notna(margen_emp)    else "—",txt,cls)
+
+        vdf = vendor_metrics(df_p, df_p_prev, ventas_con_iva, top_n=30)
+        if vdf.empty:
+            st.warning("Sin datos de vendedores.")
+        else:
+            # Gráfico top vendedores
+            st.markdown("### Top Vendedores — Ventas y Utilidad")
+            if GRAFICOS_MEJORADOS:
+                st.plotly_chart(fig_top_vendedores_mejorada(vdf, top_n=20), use_container_width=True)
+            else:
+                st.plotly_chart(fig_top_vendedores(vdf, ventas_con_iva), use_container_width=True)
+
+            # Matriz 2x2
+            st.markdown("### Matriz Estratégica — Ticket vs Transacciones")
+            q = vdf[["Vendedor","Ventas","Utilidad","TXNS","Ticket"]].copy()
+            med_x = float(np.nanmedian(q["TXNS"]))   if len(q) else 0.0
+            med_y = float(np.nanmedian(q["Ticket"])) if len(q) else 0.0
+            q["Cuadrante"] = q.apply(lambda r:
+                "⭐ Estrellas"   if (r["TXNS"]>=med_x and r["Ticket"]>=med_y) else
+                "Volumen"        if (r["TXNS"]>=med_x and r["Ticket"]<med_y)  else
+                "Oportunidad"    if (r["TXNS"]<med_x  and r["Ticket"]>=med_y) else
+                "Bajo desempeño", axis=1)
+            if GRAFICOS_MEJORADOS:
+                st.plotly_chart(fig_quadrants_mejorada(q), use_container_width=True)
+            else:
+                st.plotly_chart(fig_quadrants(q), use_container_width=True)
+
+            # Tabla vendedores (columnas clave)
+            st.markdown("### Tabla de Vendedores")
+            vtbl = vdf.copy().rename(columns={
+                "TXNS":"Txns","Ticket":"Ticket Prom",
+                "YoY_Ventas":"YoY V","YoY_Utilidad":"YoY U",
+                "YoY_TXNS":"YoY Txns","YoY_Ticket":"YoY Ticket","YoY_Margen_pp":"YoY M"})
+            vtbl = vtbl.merge(q[["Vendedor","Cuadrante"]], on="Vendedor", how="left")
+            render_table(
+                vtbl[["Vendedor","Ventas","Utilidad","Margen","Txns","Ticket Prom","Cuadrante","YoY V","YoY U","YoY M"]],
+                money_cols=["Ventas","Utilidad","Ticket Prom"],
+                pct_cols=["Margen"], int_cols=["Txns"],
+                yoy_pct_cols=["YoY V","YoY U","YoY Txns" if "YoY Txns" in vtbl.columns else "YoY V"],
+                yoy_pp_cols=["YoY M"], height=520)
+
+
+# ══════════════════════════════════════════════════════════════
+# TAB 3 — COMPARATIVOS
+# YoY mensual, acumulado y top movers
+# ══════════════════════════════════════════════════════════════
+with tab_comparativos:
+    sub_yoy, sub_movers = st.tabs(["📅 YoY Completo", "📊 Top Movers"])
+
+    with sub_yoy:
+        # Reutiliza la función de comparador YoY completo
+        crear_comparador_unificado_yoy(df_all, int(year), ventas_con_iva)
+
+    with sub_movers:
+        st.markdown("### 📊 Ganadores y Perdedores vs Año Anterior")
+        _dm  = df_kpi.copy()
+        _dmp = df_prev.copy()
+        include_otros_ins = st.toggle("Incluir OTROS", value=False, key="movers_otros")
+        if not include_otros_ins:
+            _dm  = _dm[~_dm["Familia_Nombre"].fillna("").str.strip().str.upper().eq("OTROS")]
+            _dmp = _dmp[~_dmp["Familia_Nombre"].fillna("").str.strip().str.upper().eq("OTROS")]
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Familias — Δ vs LY**")
+            fam_m = breakdown_dim(_dm, _dmp, "Familia_Nombre", ventas_con_iva, top_n=50)
+            if not fam_m.empty:
+                fam_m["Δ Ventas"] = fam_m["Ventas"] - fam_m["Ventas_LY"].fillna(0)
+                up = fam_m.sort_values("Δ Ventas", ascending=False).head(8)[["Familia_Nombre","Δ Ventas","YoY_Ventas"]].rename(columns={"Familia_Nombre":"Familia"})
+                render_table(up, money_cols=["Δ Ventas"], yoy_pct_cols=["YoY_Ventas"], height=320)
+        with c2:
+            st.markdown("**Marcas — Δ vs LY**")
+            mk_m = breakdown_dim(_dm, _dmp, "Marca_Nombre", ventas_con_iva, top_n=50)
+            if not mk_m.empty:
+                mk_m["Δ Ventas"] = mk_m["Ventas"] - mk_m["Ventas_LY"].fillna(0)
+                up2 = mk_m.sort_values("Δ Ventas", ascending=False).head(8)[["Marca_Nombre","Δ Ventas","YoY_Ventas"]].rename(columns={"Marca_Nombre":"Marca"})
+                render_table(up2, money_cols=["Δ Ventas"], yoy_pct_cols=["YoY_Ventas"], height=320)
+
+
+# ══════════════════════════════════════════════════════════════
+# TAB 4 — ANÁLISIS AVANZADO (Analistas)
+# ══════════════════════════════════════════════════════════════
+with tab_avanzado:
+    st.markdown("""
+    <div style='background:#1e293b;border:1px solid #334155;border-radius:8px;
+                padding:12px 20px;margin-bottom:20px;'>
+        <p style='color:#94A3B8;font-size:12px;margin:0;'>
+            🔬 <strong style='color:#F1F5F9;'>Módulo de Análisis Avanzado</strong> — 
+            Herramientas de uso técnico destinadas al equipo de analítica y BI. 
+            Para consultas ejecutivas utilice las secciones anteriores.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    subtabA, subtabB, subtabC, subtabD = st.tabs([
+        "📊 Constructor",
+        "📈 Gráficas",
+        "🔍 Drill-Down",
+        "📅 Comparadores"
+    ])
+
+    with subtabA:
+        st.markdown("### 📊 Constructor de Tablas Personalizado")
+        dataset_opcion = st.radio("Dataset:", ["Período actual", "Año completo", "Resumen mensual"], horizontal=True)
+        if dataset_opcion == "Período actual":
             tabla_drag_drop_builder(df_kpi, "Datos del Período")
-        elif dataset_opcion == "Datos del año completo":
+        elif dataset_opcion == "Año completo":
             tabla_drag_drop_builder(df_year, "Datos del Año")
         else:
             tabla_drag_drop_builder(ms_cur, "Resumen Mensual")
-    
-    # --------------------------------------------------------
-    # SUB-TAB 2: GRÁFICAS INTERACTIVAS
-    # --------------------------------------------------------
-    with subtab2:
+
+    with subtabB:
         st.markdown("### 📈 Gráficas Interactivas")
-        st.markdown("""
-        Cambia el tipo de gráfica, elige los ejes X e Y, personaliza colores.
-        """)
-        
-        # Selector de dataset
-        dataset_graf = st.radio(
-            "Dataset para graficar:",
-            ["Resumen mensual", "Top familias", "Top marcas"],
-            horizontal=True,
-            key="dataset_graf"
-        )
-        
+        dataset_graf = st.radio("Dataset:", ["Resumen mensual", "Top familias", "Top marcas"], horizontal=True, key="avz_graf")
         if dataset_graf == "Resumen mensual":
-            if not ms_cur.empty:
-                selector_grafica_interactivo(ms_cur, "Tendencia Mensual")
-        
+            if not ms_cur.empty: selector_grafica_interactivo(ms_cur, "Tendencia Mensual")
         elif dataset_graf == "Top familias":
             if not df_kpi.empty and "Familia_Nombre" in df_kpi.columns:
-                top_fam = (
-                    df_kpi.groupby("Familia_Nombre", observed=True)
-                    .agg({_ventas_col(ventas_con_iva): "sum", "Utilidad": "sum"})
-                    .reset_index()
-                    .nlargest(20, _ventas_col(ventas_con_iva))
-                )
-                top_fam.columns = ["Familia", "Ventas", "Utilidad"]
+                top_fam = (df_kpi.groupby("Familia_Nombre", observed=True)
+                    .agg({_ventas_col(ventas_con_iva):"sum","Utilidad":"sum"}).reset_index()
+                    .nlargest(20, _ventas_col(ventas_con_iva)))
+                top_fam.columns = ["Familia","Ventas","Utilidad"]
                 selector_grafica_interactivo(top_fam, "Top 20 Familias")
-        
-        else:  # Top marcas
+        else:
             if not df_kpi.empty and "Marca_Nombre" in df_kpi.columns:
-                top_mar = (
-                    df_kpi.groupby("Marca_Nombre", observed=True)
-                    .agg({_ventas_col(ventas_con_iva): "sum", "Utilidad": "sum"})
-                    .reset_index()
-                    .nlargest(20, _ventas_col(ventas_con_iva))
-                )
-                top_mar.columns = ["Marca", "Ventas", "Utilidad"]
+                top_mar = (df_kpi.groupby("Marca_Nombre", observed=True)
+                    .agg({_ventas_col(ventas_con_iva):"sum","Utilidad":"sum"}).reset_index()
+                    .nlargest(20, _ventas_col(ventas_con_iva)))
+                top_mar.columns = ["Marca","Ventas","Utilidad"]
                 selector_grafica_interactivo(top_mar, "Top 20 Marcas")
-    
-    # --------------------------------------------------------
-    # SUB-TAB 3: DRILL-DOWN
-    # --------------------------------------------------------
-    with subtab3:
+
+    with subtabC:
         st.markdown("### 🔍 Explorador Drill-Down")
-        st.markdown("""
-        Navega por jerarquías: **Sucursal → Familia → Marca → SKU**
-        """)
-        
-        # Selector de jerarquía
         jerarquia_opciones = {
-            "Sucursal → Familia → Marca": ["Almacen_CANON", "Familia_Nombre", "Marca_Nombre"],
-            "Familia → Marca → SKU": ["Familia_Nombre", "Marca_Nombre", "Articulo"],
-            "Vendedor → Familia → Marca": ["Vendedor_Nombre", "Familia_Nombre", "Marca_Nombre"],
+            "Sucursal → Familia → Marca": ["Almacen_CANON","Familia_Nombre","Marca_Nombre"],
+            "Familia → Marca → SKU":      ["Familia_Nombre","Marca_Nombre","Articulo"],
+            "Vendedor → Familia → Marca": ["Vendedor_Nombre","Familia_Nombre","Marca_Nombre"],
         }
-        
-        jerarquia_seleccionada = st.selectbox(
-            "Selecciona la jerarquía:",
-            list(jerarquia_opciones.keys())
-        )
-        
-        jerarquia = jerarquia_opciones[jerarquia_seleccionada]
-        
-        drill_down_explorer(df_all, jerarquia)
-    
-    # --------------------------------------------------------
-    # SUB-TAB 4: COMPARADOR DE PERÍODOS
-    # --------------------------------------------------------
-    with subtab4:
-        st.markdown("### 📅 Comparador de Períodos")
-        st.markdown("""
-        Compara cualquier período contra otro para identificar tendencias.
-        """)
-        
-        comparador_periodos(df_all, int(year))
-    
-    
-    # --------------------------------------------------------
-    # SUB-TAB 5: COMPARADOR YoY COMPLETO (UNIFICADO)
-    # --------------------------------------------------------
-    with subtab5:
-        st.markdown("### 📊 Comparador Completo YoY")
-        st.markdown("""
-        Vista unificada: **Mensual** (izquierda) + **Acumulado** (derecha)
-        
-        Con filtros por sucursal, familia y marca para análisis profundo.
-        """)
-        
-        crear_comparador_unificado_yoy(df_all, int(year), ventas_con_iva)
-    # --------------------------------------------------------
-    with subtab5:
-        st.markdown("### 📆 Comparación Mensual Año vs Año")
-        st.markdown("""
-        Compara mes a mes el desempeño de dos años diferentes.
-        Identifica en qué meses hay mejoras o caídas.
-        """)
-        
-        crear_comparador_mensual_yoy(df_all, int(year), ventas_con_iva)
-    
-    # --------------------------------------------------------
-    # TIPS Y AYUDA
-    # --------------------------------------------------------
+        jer_sel = st.selectbox("Jerarquía:", list(jerarquia_opciones.keys()))
+        drill_down_explorer(df_all, jerarquia_opciones[jer_sel])
+
+    with subtabD:
+        sub_comp1, sub_comp2 = st.tabs(["📅 Comparador Períodos", "📊 Comparador YoY Completo"])
+        with sub_comp1:
+            comparador_periodos(df_all, int(year))
+        with sub_comp2:
+            crear_comparador_mensual_yoy(df_all, int(year), ventas_con_iva)
+
     with st.expander("💡 Consejos de Uso"):
         st.markdown("""
-        ### 📊 Constructor de Tablas
-        - Selecciona múltiples columnas con Ctrl/Cmd + Click
-        - Usa agregaciones para resumir datos
-        - Exporta a CSV para análisis en Excel
-        
-        ### 📈 Gráficas Interactivas
-        - Prueba diferentes tipos de gráfica para el mismo dato
-        - Usa colores corporativos para presentaciones
-        - Las gráficas de líneas son mejores para tendencias
-        - Las barras son mejores para comparaciones
-        
-        ### 🔍 Drill-Down
-        - Click en 🔽 para explorar niveles más profundos
-        - Usa ⬆️ para regresar al nivel anterior
-        - 🔄 Reinicia para comenzar desde el principio
-        
-        ### 📅 Comparador
-        - Compara meses similares (ej: Dic 2024 vs Dic 2025)
-        - Compara trimestres (Q1 2024 vs Q1 2025)
-        - Identifica estacionalidad
+        **Constructor:** Selecciona columnas, aplica agregaciones, exporta a CSV.
+        **Gráficas:** Prueba distintos tipos para el mismo dato.
+        **Drill-Down:** Click 🔽 para bajar un nivel, ⬆️ para subir.
+        **Comparador:** Ideal para comparar trimestres o meses similares.
         """)
-
-
