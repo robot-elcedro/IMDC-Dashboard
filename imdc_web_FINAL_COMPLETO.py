@@ -2751,7 +2751,9 @@ def selector_grafica_interactivo(df: pd.DataFrame, titulo: str = "Gráfica"):
         )
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    _plot_container_2753 = st.empty()
+    with _plot_container_2753:
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def drill_down_explorer(df: pd.DataFrame, jerarquia: list):
@@ -2909,7 +2911,9 @@ def comparador_periodos(df_all: pd.DataFrame, year: int):
         height=400
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    _plot_container_2911 = st.empty()
+    with _plot_container_2911:
+        st.plotly_chart(fig, use_container_width=True)
 
 
 # ============================================================
@@ -3074,7 +3078,9 @@ def crear_comparador_unificado_yoy(df_all: pd.DataFrame, year_actual: int, venta
             showlegend=True
         )
         
-        st.plotly_chart(fig_mensual, use_container_width=True)
+        _plot_container_3076 = st.empty()
+        with _plot_container_3076:
+            st.plotly_chart(fig_mensual, use_container_width=True)
         
         # Variación
         comparacion = resumen_base[['Mes', 'Mes_Nombre', ventas_col]].merge(
@@ -3113,7 +3119,9 @@ def crear_comparador_unificado_yoy(df_all: pd.DataFrame, year_actual: int, venta
             showlegend=False
         )
         
-        st.plotly_chart(fig_var, use_container_width=True)
+        _plot_container_3115 = st.empty()
+        with _plot_container_3115:
+            st.plotly_chart(fig_var, use_container_width=True)
     
     # ========================================
     # DERECHA: COMPARACIÓN ACUMULADA
@@ -3157,7 +3165,9 @@ def crear_comparador_unificado_yoy(df_all: pd.DataFrame, year_actual: int, venta
             hovermode='x unified'
         )
         
-        st.plotly_chart(fig_acum, use_container_width=True)
+        _plot_container_3159 = st.empty()
+        with _plot_container_3159:
+            st.plotly_chart(fig_acum, use_container_width=True)
         
         # Utilidad acumulada
         fig_util_acum = go.Figure()
@@ -3193,7 +3203,9 @@ def crear_comparador_unificado_yoy(df_all: pd.DataFrame, year_actual: int, venta
             hovermode='x unified'
         )
         
-        st.plotly_chart(fig_util_acum, use_container_width=True)
+        _plot_container_3195 = st.empty()
+        with _plot_container_3195:
+            st.plotly_chart(fig_util_acum, use_container_width=True)
     
     # ========================================
     # ── TABLAS DE CALOR — FAMILIAS Y MARCAS ─────────────────
@@ -3310,12 +3322,16 @@ def crear_comparador_unificado_yoy(df_all: pd.DataFrame, year_actual: int, venta
 
         col_izq, col_der = st.columns(2, gap="large")
         with col_izq:
-            st.plotly_chart(
+            _plot_container_3312 = st.empty()
+            with _plot_container_3312:
+                st.plotly_chart(
                 _make_heatmap(df_var_mens, f"{titulo} — Variación % Mensual vs {año_b}", use_container_width=True),
                 use_container_width=True
             )
         with col_der:
-            st.plotly_chart(
+            _plot_container_3317 = st.empty()
+            with _plot_container_3317:
+                st.plotly_chart(
                 _make_heatmap(df_var_acum, f"{titulo} — Variación % Acumulada vs {año_b}", use_container_width=True),
                 use_container_width=True
             )
@@ -3541,7 +3557,9 @@ def crear_comparador_mensual_yoy(df_all: pd.DataFrame, year_actual: int, ventas_
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
     )
     
-    st.plotly_chart(fig_barras, use_container_width=True)
+    _plot_container_3543 = st.empty()
+    with _plot_container_3543:
+        st.plotly_chart(fig_barras, use_container_width=True)
     
     # GRÁFICA DE VARIACIÓN
     fig_variacion = go.Figure()
@@ -3569,7 +3587,9 @@ def crear_comparador_mensual_yoy(df_all: pd.DataFrame, year_actual: int, ventas_
         showlegend=False
     )
     
-    st.plotly_chart(fig_variacion, use_container_width=True)
+    _plot_container_3571 = st.empty()
+    with _plot_container_3571:
+        st.plotly_chart(fig_variacion, use_container_width=True)
     
     # TABLA DETALLADA
     st.markdown("#### 📋 Detalle Mensual")
@@ -3696,7 +3716,9 @@ def crear_comparador_acumulado_yoy(df_all: pd.DataFrame, year_actual: int, venta
         hovermode='x unified'
     )
     
-    st.plotly_chart(fig_acum, use_container_width=True)
+    _plot_container_3698 = st.empty()
+    with _plot_container_3698:
+        st.plotly_chart(fig_acum, use_container_width=True)
     
     # GRÁFICA DE UTILIDAD ACUMULADA
     fig_util_acum = go.Figure()
@@ -3733,7 +3755,9 @@ def crear_comparador_acumulado_yoy(df_all: pd.DataFrame, year_actual: int, venta
         hovermode='x unified'
     )
     
-    st.plotly_chart(fig_util_acum, use_container_width=True)
+    _plot_container_3735 = st.empty()
+    with _plot_container_3735:
+        st.plotly_chart(fig_util_acum, use_container_width=True)
     
     # TABLA COMPARATIVA ACUMULADA
     st.markdown("#### 📋 Tabla Acumulada")
@@ -3952,7 +3976,9 @@ if "Heatmap" in vista_rapida or not 'vista_rapida' in locals():
     st.markdown("---")
     if not ms_cur.empty:
         fig_heatmap = create_heatmap_performance(ms_cur)
-        st.plotly_chart(fig_heatmap, use_container_width=True)
+        _plot_container_3954 = st.empty()
+        with _plot_container_3954:
+            st.plotly_chart(fig_heatmap, use_container_width=True)
 
 # ============================================================
 # GRÁFICAS COMPARATIVAS LADO A LADO
@@ -3973,12 +3999,16 @@ if "Gráficas" in vista_rapida or not 'vista_rapida' in locals():
                 "Margen de Utilidad",
                 0.25  # Threshold 25%
             )
-            st.plotly_chart(fig_gauge_margen, use_container_width=True)
+            _plot_container_3975 = st.empty()
+            with _plot_container_3975:
+                st.plotly_chart(fig_gauge_margen, use_container_width=True)
     
     # WATERFALL DE UTILIDAD
     with comp_cols[1]:
         fig_waterfall = create_waterfall_chart(k_cur, k_prev)
-        st.plotly_chart(fig_waterfall, use_container_width=True)
+        _plot_container_3980 = st.empty()
+        with _plot_container_3980:
+            st.plotly_chart(fig_waterfall, use_container_width=True)
 
 # ============================================================
 # BULLET CHARTS DE OBJETIVOS
@@ -4486,9 +4516,13 @@ with tab_comando:
     # ── Gráfico mensual 13 meses ─────────────────────────────
     st.markdown("#### 📈 Evolución Mensual — Últimos 13 Meses")
     if GRAFICOS_MEJORADOS:
-        st.plotly_chart(fig_grafica_mensual_mejorada(ms_cur, ventas_con_iva, max(1, m_start), m_end), use_container_width=True)
+        _plot_container_4488 = st.empty()
+        with _plot_container_4488:
+            st.plotly_chart(fig_grafica_mensual_mejorada(ms_cur, ventas_con_iva, max(1, m_start), m_end), use_container_width=True)
     else:
-        st.plotly_chart(fig_hist_static(ms_cur, ventas_con_iva, m_start, m_end), use_container_width=True)
+        _plot_container_4490 = st.empty()
+        with _plot_container_4490:
+            st.plotly_chart(fig_hist_static(ms_cur, ventas_con_iva, m_start, m_end), use_container_width=True)
 
     # ── Análisis inteligente + Alertas priorizadas ───────────
     st.markdown("#### 🧠 Análisis Automático del Período")
@@ -4624,14 +4658,18 @@ with tab_negocio:
             fam_rank = breakdown_dim(df_mix, df_mix_prev, "Familia_Nombre", ventas_con_iva, top_n=20)
             if fam_rank.empty: st.warning("Sin datos de familias.")
             else:
-                st.plotly_chart(fig_bars_line_rank(fam_rank.rename(columns={"Familia_Nombre":"Familia"}),
+                _plot_container_4626 = st.empty()
+                with _plot_container_4626:
+                    st.plotly_chart(fig_bars_line_rank(fam_rank.rename(columns={"Familia_Nombre":"Familia"}),
                     "Familia", ventas_con_iva, "Top 20 Familias"), use_container_width=True)
 
         with colB:
             marca_rank = breakdown_dim(df_mix, df_mix_prev, "Marca_Nombre", ventas_con_iva, top_n=20)
             if marca_rank.empty: st.warning("Sin datos de marcas.")
             else:
-                st.plotly_chart(fig_bars_line_rank(marca_rank.rename(columns={"Marca_Nombre":"Marca"}),
+                _plot_container_4633 = st.empty()
+                with _plot_container_4633:
+                    st.plotly_chart(fig_bars_line_rank(marca_rank.rename(columns={"Marca_Nombre":"Marca"}),
                     "Marca", ventas_con_iva, "Top 20 Marcas"), use_container_width=True)
 
         # Tablas compactas
@@ -4794,7 +4832,9 @@ with tab_negocio:
                     paper_bgcolor="rgba(0,0,0,0)",
                     font=dict(color="#F8FAFC")
                 )
-                st.plotly_chart(fig_tm, use_container_width=True)
+                _plot_container_4796 = st.empty()
+                with _plot_container_4796:
+                    st.plotly_chart(fig_tm, use_container_width=True)
 
                 # Leyenda rápida debajo
                 if "Variación" in modo_treemap:
@@ -4848,9 +4888,13 @@ with tab_negocio:
             # Gráfico top vendedores
             st.markdown("### Top Vendedores — Ventas y Utilidad")
             if GRAFICOS_MEJORADOS:
-                st.plotly_chart(fig_top_vendedores_mejorada(vdf, top_n=20), use_container_width=True)
+                _plot_container_4850 = st.empty()
+                with _plot_container_4850:
+                    st.plotly_chart(fig_top_vendedores_mejorada(vdf, top_n=20), use_container_width=True)
             else:
-                st.plotly_chart(fig_top_vendedores(vdf, ventas_con_iva), use_container_width=True)
+                _plot_container_4852 = st.empty()
+                with _plot_container_4852:
+                    st.plotly_chart(fig_top_vendedores(vdf, ventas_con_iva), use_container_width=True)
 
             # Matriz 2x2
             st.markdown("### Matriz Estratégica — Ticket vs Transacciones")
@@ -4863,9 +4907,13 @@ with tab_negocio:
                 "Oportunidad"    if (r["TXNS"]<med_x  and r["Ticket"]>=med_y) else
                 "Bajo desempeño", axis=1)
             if GRAFICOS_MEJORADOS:
-                st.plotly_chart(fig_quadrants_mejorada(q), use_container_width=True)
+                _plot_container_4865 = st.empty()
+                with _plot_container_4865:
+                    st.plotly_chart(fig_quadrants_mejorada(q), use_container_width=True)
             else:
-                st.plotly_chart(fig_quadrants(q), use_container_width=True)
+                _plot_container_4867 = st.empty()
+                with _plot_container_4867:
+                    st.plotly_chart(fig_quadrants(q), use_container_width=True)
 
             # Tabla vendedores (columnas clave)
             st.markdown("### Tabla de Vendedores")
