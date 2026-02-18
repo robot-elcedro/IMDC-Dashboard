@@ -3300,12 +3300,12 @@ def crear_comparador_unificado_yoy(df_all: pd.DataFrame, year_actual: int, venta
         col_izq, col_der = st.columns(2, gap="large")
         with col_izq:
             st.plotly_chart(
-                _make_heatmap(df_var_mens, f"{titulo} — Variación % Mensual vs {año_b}"),
+                _make_heatmap(df_var_mens, f"{titulo} — Variación % Mensual vs {año_b}", use_container_width=True),
                 use_container_width=True
             )
         with col_der:
             st.plotly_chart(
-                _make_heatmap(df_var_acum, f"{titulo} — Variación % Acumulada vs {año_b}"),
+                _make_heatmap(df_var_acum, f"{titulo} — Variación % Acumulada vs {año_b}", use_container_width=True),
                 use_container_width=True
             )
 
