@@ -572,7 +572,8 @@ except ImportError:
 # ------------------------------------------------------------
 # Page
 # ------------------------------------------------------------
-st.set_page_config(page_title="IMDC — Panel Ejecutivo", layout="wide")
+# NOTA: st.set_page_config() ya se llama en app.py
+# No se debe llamar dos veces en la misma app
 
 # Anti-Translate (Chrome/Google Translate)
 components.html(
