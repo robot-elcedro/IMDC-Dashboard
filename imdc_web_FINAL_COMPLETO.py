@@ -966,6 +966,13 @@ BASE_DIR = Path(__file__).resolve().parent
 # Soporte Streamlit Cloud: si IMDC_DATA_DIR está definido, leer de ahí
 import os as _os
 _cloud_data_dir = _os.environ.get("IMDC_DATA_DIR", "")
+
+# DEBUG: mostrar en sidebar para debugging
+if "DEBUG_SHOWN" not in st.session_state:
+    with st.sidebar:
+        st.info(f"🔍 DEBUG:\n- IMDC_DATA_DIR: {_cloud_data_dir}\n- Existe: {Path(_cloud_data_dir).exists() if _cloud_data_dir else 'N/A'}")
+    st.session_state.DEBUG_SHOWN = True
+
 if _cloud_data_dir and Path(_cloud_data_dir).exists():
     OUTPUT_DIR = Path(_cloud_data_dir)
 else:
