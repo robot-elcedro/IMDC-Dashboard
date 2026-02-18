@@ -967,12 +967,6 @@ BASE_DIR = Path(__file__).resolve().parent
 import os as _os
 _cloud_data_dir = _os.environ.get("IMDC_DATA_DIR", "")
 
-# DEBUG: mostrar en sidebar para debugging
-if "DEBUG_SHOWN" not in st.session_state:
-    with st.sidebar:
-        st.info(f"🔍 DEBUG:\n- IMDC_DATA_DIR: {_cloud_data_dir}\n- Existe: {Path(_cloud_data_dir).exists() if _cloud_data_dir else 'N/A'}")
-    st.session_state.DEBUG_SHOWN = True
-
 if _cloud_data_dir and Path(_cloud_data_dir).exists():
     OUTPUT_DIR = Path(_cloud_data_dir)
 else:
@@ -1449,18 +1443,6 @@ def load_all() -> Tuple[pd.DataFrame, List[int], List[str], List[str]]:
     Devuelve: df_all, years, familias (display), marcas
     """
     files = sorted(OUTPUT_DIR.glob(PARQUET_GLOB))
-    
-    # DEBUG: mostrar qué está buscando
-    if "LOAD_DEBUG_SHOWN" not in st.session_state:
-        with st.sidebar:
-            st.warning(f"🔍 LOAD DEBUG:\n- Buscando en: {OUTPUT_DIR}\n- Patrón: {PARQUET_GLOB}\n- Archivos encontrados: {len(files)}")
-            if files:
-                st.success(f"Archivos: {[f.name for f in files]}")
-            else:
-                # Mostrar qué archivos HAY en el directorio
-                all_files = list(OUTPUT_DIR.glob("*")) if OUTPUT_DIR.exists() else []
-                st.error(f"Directorio contiene: {[f.name for f in all_files[:10]]}")
-        st.session_state.LOAD_DEBUG_SHOWN = True
     
     if not files:
         return pd.DataFrame(), [], [], []
