@@ -962,9 +962,17 @@ st.markdown(
 # Constantes & paths
 # ------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
-OUTPUT_DIR = BASE_DIR / "output"
+
+# Soporte Streamlit Cloud: si IMDC_DATA_DIR está definido, leer de ahí
+import os as _os
+_cloud_data_dir = _os.environ.get("IMDC_DATA_DIR", "")
+if _cloud_data_dir and Path(_cloud_data_dir).exists():
+    OUTPUT_DIR = Path(_cloud_data_dir)
+else:
+    OUTPUT_DIR = BASE_DIR / "output"
+
 DATOS_DIR = BASE_DIR / "Datos"
-PARQUET_GLOB = "cedro_*.parquet"
+PARQUET_GLOB = "*.parquet"  # En cloud acepta cualquier nombre
 
 CATALOGO_SUCURSALES = [
     "CONSOLIDADO",
