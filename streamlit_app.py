@@ -1,6 +1,5 @@
 """
-IMDC Dashboard - Home
-Panel de Control Ejecutivo
+IMDC Dashboard - Entry Point
 """
 import streamlit as st
 
@@ -19,9 +18,6 @@ import time
 # ============================================================
 # AUTENTICACIÓN
 # ============================================================
-
-def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode()).hexdigest()
 
 def check_password():
     if "password_hash" not in st.secrets:
@@ -60,7 +56,7 @@ def check_password():
             submit = st.form_submit_button("Iniciar Sesión", use_container_width=True)
             
             if submit:
-                if hash_password(password) == VALID_HASH:
+                if hashlib.sha256(password.encode()).hexdigest() == VALID_HASH:
                     st.session_state.authenticated = True
                     st.session_state.last_activity = time.time()
                     st.session_state.failed_attempts = 0
@@ -76,58 +72,66 @@ def check_password():
     return False
 
 # ============================================================
-# GOOGLE DRIVE
+# GOOGLE DRIVE (Con timeout)
 # ============================================================
 
+@st.cache_resource(show_spinner=False)
 def download_from_drive():
+    """Descarga datos con timeout de 30 segundos"""
     if "data_downloaded" in st.session_state:
         return
     
-    from google.oauth2 import service_account
-    from googleapiclient.discovery import build
-    from googleapiclient.http import MediaIoBaseDownload
-    import io
-    
-    if "gcp_service_account" not in st.secrets or "gdrive_folder_id" not in st.secrets:
-        st.error("❌ Configura gcp_service_account y gdrive_folder_id en Secrets")
-        st.stop()
-    
-    credentials = service_account.Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
-        scopes=["https://www.googleapis.com/auth/drive.readonly"]
-    )
-    
-    service = build('drive', 'v3', credentials=credentials)
-    folder_id = st.secrets["gdrive_folder_id"]
-    
-    data_dir = Path("/tmp/imdc_data")
-    data_dir.mkdir(exist_ok=True)
-    
-    query = f"'{folder_id}' in parents and name contains '.parquet' and trashed=false"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
-    files = results.get('files', [])
-    
-    if not files:
-        st.error("❌ No hay .parquet en Drive")
-        st.stop()
-    
-    with st.spinner(f"📥 Descargando {len(files)} archivo(s)..."):
-        for file in files:
-            file_path = data_dir / file['name']
-            if file_path.exists() and (time.time() - file_path.stat().st_mtime) < 3600:
-                continue
+    with st.spinner("📥 Descargando datos..."):
+        try:
+            from google.oauth2 import service_account
+            from googleapiclient.discovery import build
+            from googleapiclient.http import MediaIoBaseDownload
+            import io
             
-            request = service.files().get_media(fileId=file['id'])
-            fh = io.BytesIO()
-            downloader = MediaIoBaseDownload(fh, request)
-            done = False
-            while not done:
-                status, done = downloader.next_chunk()
-            with open(file_path, 'wb') as f:
-                f.write(fh.getvalue())
-    
-    os.environ["IMDC_DATA_DIR"] = str(data_dir)
-    st.session_state.data_downloaded = True
+            if "gcp_service_account" not in st.secrets or "gdrive_folder_id" not in st.secrets:
+                st.error("❌ Configura secrets")
+                st.stop()
+            
+            credentials = service_account.Credentials.from_service_account_info(
+                st.secrets["gcp_service_account"],
+                scopes=["https://www.googleapis.com/auth/drive.readonly"]
+            )
+            
+            service = build('drive', 'v3', credentials=credentials, cache_discovery=False)
+            folder_id = st.secrets["gdrive_folder_id"]
+            
+            data_dir = Path("/tmp/imdc_data")
+            data_dir.mkdir(exist_ok=True)
+            
+            query = f"'{folder_id}' in parents and name contains '.parquet' and trashed=false"
+            results = service.files().list(q=query, fields="files(id, name)", pageSize=10).execute()
+            files = results.get('files', [])
+            
+            if not files:
+                st.error("❌ No hay .parquet en Drive")
+                st.stop()
+            
+            for file in files:
+                file_path = data_dir / file['name']
+                if file_path.exists() and (time.time() - file_path.stat().st_mtime) < 7200:  # 2 horas
+                    continue
+                
+                request = service.files().get_media(fileId=file['id'])
+                fh = io.BytesIO()
+                downloader = MediaIoBaseDownload(fh, request)
+                done = False
+                while not done:
+                    status, done = downloader.next_chunk()
+                with open(file_path, 'wb') as f:
+                    f.write(fh.getvalue())
+            
+            os.environ["IMDC_DATA_DIR"] = str(data_dir)
+            st.session_state.data_downloaded = True
+            
+        except Exception as e:
+            st.error(f"❌ Error: {str(e)}")
+            st.info("💡 Intenta hacer Reboot de la app")
+            st.stop()
 
 # ============================================================
 # MAIN
@@ -154,9 +158,10 @@ Navega por las secciones en el menú lateral:
 
 ### 📌 Navegación
 
-Usa el menú de la izquierda (☰) para cambiar entre páginas.
+👈 **Usa el menú de la izquierda** para cambiar entre páginas.
 
 Cada página se carga independientemente para mejor rendimiento.
 """)
 
+st.success("✅ Datos cargados correctamente")
 st.info("👈 Selecciona una página del menú lateral para comenzar")
